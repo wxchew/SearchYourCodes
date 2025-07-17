@@ -29,7 +29,7 @@ def get_hf_embeddings(texts: List[str], model_name: str, batch_size: int = 32, p
         batch_texts = texts[i:i + batch_size]
         
         # Tokenize the batch
-        encoded_input = tokenizer(batch_texts, padding=True, truncation=True, return_tensors='pt').to(DEVICE)
+        encoded_input = tokenizer(batch_texts, padding=True, truncation=True, max_length=512, return_tensors='pt').to(DEVICE)
         
         with torch.no_grad(): # Disable gradient calculation for inference
             model_output = model(**encoded_input)
@@ -84,7 +84,7 @@ if __name__ == "__main__":
     # Load your generated code chunks
     chunks_file = Path("data") / "code_chunks_clean.json"
     if not chunks_file.exists():
-        print(f"Error: {chunks_file} not found. Please run src/code_parser.py first.")
+        print(f"Error: {chunks_file} not found. Please run code_parser_clean.py first.")
         exit(1)
 
     with open(chunks_file, 'r', encoding='utf-8') as f:
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     # --- Models to evaluate ---
     models_to_test = {
         "Sentence-BERT_MiniLM": "all-MiniLM-L6-v2",
-        "CodeBERT": "microsoft/codebert-base",
+        "UniXcoder": "microsoft/unixcoder-base",
         # "Salesforce_CodeT5P_220M": "Salesforce/codet5p-220m-bpe", # Uncomment if you want to test
         # "BAAI_BGE_Base": "BAAI/bge-base-en-v1.5" # Uncomment if you want to test
     }
@@ -165,7 +165,7 @@ if __name__ == "__main__":
         }
 
     # Save model configuration with both models
-    model_config_path = Path("config") / "embedding_models.json"
+    model_config_path = Path("config") / "unixcoder_models.json"
     model_config_path.parent.mkdir(parents=True, exist_ok=True)
     with open(model_config_path, 'w') as f:
         json.dump({
@@ -180,7 +180,7 @@ if __name__ == "__main__":
     print(f"\nBoth model configurations saved to {model_config_path}")
     
     # Also save chunk metadata for reference
-    chunk_metadata_file = embeddings_dir / "chunk_metadata.json"
+    chunk_metadata_file = embeddings_dir / "unixcoder_chunk_metadata.json"
     chunk_metadata = [
         {
             "index": i,

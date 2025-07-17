@@ -1042,8 +1042,8 @@ def main() -> int:
     parser.add_argument(
         '--repo-path', 
         type=Path,
-        default=Path('manuel_natcom/src/play'),
-        help='Path to repository root (default: manuel_natcom/src/play)'
+        default=Path('manuel_natcom/src/sim/hands'),
+        help='Path to repository root (default: manuel_natcom/src/sim/hands)'
     )
     parser.add_argument(
         '--output',

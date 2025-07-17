@@ -23,7 +23,7 @@ def get_hf_embeddings(texts: List[str], model_name: str, device: str):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModel.from_pretrained(model_name).to(device)
     
-    encoded_input = tokenizer(texts, padding=True, truncation=True, return_tensors='pt').to(device)
+    encoded_input = tokenizer(texts, padding=True, truncation=True, max_length=512, return_tensors='pt').to(device)
     
     with torch.no_grad():
         model_output = model(**encoded_input)
@@ -63,7 +63,7 @@ def load_embedding_model(model_config: Dict):
 # --- Main Ingestion Logic ---
 if __name__ == "__main__":
     # --- 1. Load Configuration and Chunks ---
-    model_config_path = Path("config") / "embedding_models.json"
+    model_config_path = Path("config") / "unixcoder_models.json"
     chunks_file = Path("data") / "code_chunks_clean.json"
     vector_db_path = Path("data") / "chroma_db" # Directory for ChromaDB persistence
 
@@ -95,7 +95,7 @@ if __name__ == "__main__":
     print(f"ChromaDB client initialized. Data will be stored in: {vector_db_path}")
     
     # Delete existing model-specific collections to avoid ID duplication
-    for coll_name in ["codebert_snippets", "sbert_snippets"]:
+    for coll_name in ["codebert_snippets", "sbert_snippets", "unixcoder_snippets"]:
         try:
             client.delete_collection(name=coll_name)
             print(f"Deleted existing collection: {coll_name}")
@@ -117,6 +117,8 @@ if __name__ == "__main__":
             collection_name = "codebert_snippets"
         elif model_name == "Sentence-BERT_MiniLM":
             collection_name = "sbert_snippets"
+        elif model_name == "UniXcoder":
+            collection_name = "unixcoder_snippets"
         else:
             collection_name = f"{model_name.lower()}_snippets"
         
@@ -149,6 +151,8 @@ if __name__ == "__main__":
             embedding_file = Path("data/embeddings/codebert_embeddings.npy")
         elif model_name == "Sentence-BERT_MiniLM":
             embedding_file = Path("data/embeddings/sentence_bert_minilm_embeddings.npy")
+        elif model_name == "UniXcoder":
+            embedding_file = Path("data/embeddings/unixcoder_embeddings.npy")
         else:
             # Fallback to config file path if available
             embedding_file = Path(model_config.get('embedding_file', ''))
