@@ -5,23 +5,42 @@ C++ Code Parser
 Tree-sitter based parser that extracts functions and classes from C++ codebases
 for code analysis and search applications.
 
+This module provides functionality to parse C++ source files and extract
+structured code chunks with rich contextual information including function
+definitions, class definitions, namespaces, and documentation.
+
+Features:
+    - Tree-sitter based parsing for robust AST analysis
+    - Extracts functions, classes, and their documentation
+    - Handles both header and implementation files
+    - Provides enriched content with contextual prefixes
+    - Configurable chunking parameters
+
 Usage:
     python code_parser_clean.py [--repo-path PATH] [--output PATH] [--verbose]
 
 Dependencies:
     pip install tree-sitter tree-sitter-cpp tqdm
+
+Authors:
+    Code Search System
+
+Version:
+    1.0.0
 """
 
+# Standard library imports
+import argparse
+import json
 import os
 import re
-import json
-import argparse
-from pathlib import Path
-from typing import List, Dict, Optional
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional
 
-from tree_sitter import Language, Parser
+# Third-party imports
 import tree_sitter_cpp
+from tree_sitter import Language, Parser
 from tqdm import tqdm
 
 
@@ -1037,7 +1056,16 @@ class CppParser:
 
 
 def main() -> int:
-    """Main entry point."""
+    """
+    Main entry point for the C++ code parser.
+    
+    Parses command line arguments and orchestrates the code parsing process.
+    Extracts structured code chunks from C++ repositories and saves them
+    to JSON format for use with code search systems.
+    
+    Returns:
+        int: Exit code (0 for success, 1 for error)
+    """
     parser = argparse.ArgumentParser(description="Parse C++ codebase into structured chunks")
     parser.add_argument(
         '--repo-path', 

@@ -1,23 +1,44 @@
+"""
+Embedding Generation System for Code Chunks
+
+This module provides embedding generation capabilities using various models:
+- HuggingFace AutoModels (e.g., microsoft/unixcoder-base)
+- Sentence Transformers (e.g., all-MiniLM-L6-v2)
+
+The system supports batch processing and different pooling strategies for
+optimal performance and accuracy.
+"""
+
+import argparse
+import json
+import time
+from pathlib import Path
+from typing import List, Dict
+
 import torch
+import numpy as np
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
-from pathlib import Path
-import json
 from tqdm import tqdm
-from typing import List, Dict
-import numpy as np
-import argparse
 
-# Ensure MPS is available for M1 Mac
+# Configuration
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 print(f"Using device: {DEVICE}")
 
-# --- Helper Function to get embeddings ---
-def get_hf_embeddings(texts: List[str], model_name: str, batch_size: int = 32, pooling_method: str = 'mean'):
+# Helper Functions for Embedding Generation
+def get_hf_embeddings(texts: List[str], model_name: str, batch_size: int = 32, 
+                     pooling_method: str = 'mean') -> np.ndarray:
     """
-    Generates embeddings using a Hugging Face AutoModel (e.g., CodeBERT).
-    Applies mean pooling to get sentence-level embeddings.
-    Processes texts in batches to avoid memory issues.
+    Generate embeddings using HuggingFace AutoModel with various pooling strategies.
+    
+    Args:
+        texts: List of input texts
+        model_name: HuggingFace model identifier
+        batch_size: Batch size for processing
+        pooling_method: Pooling strategy ('mean', 'cls', 'pooler')
+        
+    Returns:
+        Normalized embeddings array
     """
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModel.from_pretrained(model_name).to(DEVICE)
@@ -29,21 +50,23 @@ def get_hf_embeddings(texts: List[str], model_name: str, batch_size: int = 32, p
         batch_texts = texts[i:i + batch_size]
         
         # Tokenize the batch
-        encoded_input = tokenizer(batch_texts, padding=True, truncation=True, max_length=512, return_tensors='pt').to(DEVICE)
+        encoded_input = tokenizer(batch_texts, padding=True, truncation=True, 
+                                max_length=512, return_tensors='pt').to(DEVICE)
         
-        with torch.no_grad(): # Disable gradient calculation for inference
+        with torch.no_grad():  # Disable gradient calculation for inference
             model_output = model(**encoded_input)
         
-        # Pooling strategies
+        # Apply pooling strategy
         if pooling_method == 'cls':
             # Use [CLS] token representation
             batch_embeddings = model_output.last_hidden_state[:, 0, :].cpu().numpy()
-        elif pooling_method == 'pooler' and hasattr(model_output, 'pooler_output') and model_output.pooler_output is not None:
+        elif (pooling_method == 'pooler' and hasattr(model_output, 'pooler_output') 
+              and model_output.pooler_output is not None):
             # Use the pooler_output if available
             batch_embeddings = model_output.pooler_output.cpu().numpy()
         else:
             # Default to mean pooling on the last hidden state
-            token_embeddings = model_output.last_hidden_state # (batch, seq, hidden)
+            token_embeddings = model_output.last_hidden_state  # (batch, seq, hidden)
             attention_mask = encoded_input['attention_mask']
             input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
             sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
@@ -55,45 +78,120 @@ def get_hf_embeddings(texts: List[str], model_name: str, batch_size: int = 32, p
         batch_embeddings = batch_embeddings / np.maximum(norms, 1e-8)
         all_embeddings.append(batch_embeddings)
         
-        # Clear cache to free memory
+        # Clear cache to prevent memory buildup
         if DEVICE == "mps":
             torch.mps.empty_cache()
         elif DEVICE == "cuda":
             torch.cuda.empty_cache()
-    
-    return np.concatenate(all_embeddings, axis=0)
+        
+    # Combine all batches
+    final_embeddings = np.vstack(all_embeddings)
+    return final_embeddings
 
-def get_sbert_embeddings(texts: List[str], model_name: str):
+
+def get_sbert_embeddings(texts: List[str], model_name: str) -> np.ndarray:
     """
-    Generates embeddings using a Sentence-BERT model.
+    Generate normalized embeddings using Sentence-BERT model.
+    
+    Args:
+        texts: List of input texts
+        model_name: Sentence-BERT model identifier
+        
+    Returns:
+        Normalized embeddings array
     """
     model = SentenceTransformer(model_name, device=DEVICE)
     embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
-    # Normalize SBERT embeddings too
+    
+    # Normalize embeddings to unit norm
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    return embeddings / np.maximum(norms, 1e-8)
+    normalized_embeddings = embeddings / np.maximum(norms, 1e-8)
+    return normalized_embeddings
 
 
-# --- Main Experimentation Logic ---
-if __name__ == "__main__":
+def benchmark_model(texts: List[str], model_config: Dict, output_file: Path) -> Dict:
+    """
+    Benchmark a model's performance and save results.
+    
+    Args:
+        texts: List of input texts
+        model_config: Model configuration dictionary
+        output_file: Path to save benchmark results
+        
+    Returns:
+        Dictionary containing benchmark metrics
+    """
+    model_name = model_config['model_name']
+    model_type = model_config['model_type']
+    
+    print(f"\nBenchmarking {model_name} ({model_type})...")
+    
+    # Use time.time() for timing instead of CUDA events (works on all devices)
+    start_time = time.time()
+    
+    if model_type == "sentence_transformer":
+        embeddings = get_sbert_embeddings(texts, model_name)
+    elif model_type == "huggingface_automodel":
+        embeddings = get_hf_embeddings(texts, model_name, batch_size=16)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+    
+    # Synchronize device operations before measuring end time
+    if DEVICE == "mps":
+        torch.mps.synchronize()
+    elif DEVICE == "cuda":
+        torch.cuda.synchronize()
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    
+    # Calculate metrics
+    metrics = {
+        "model_name": model_name,
+        "model_type": model_type,
+        "total_time_seconds": total_time,
+        "chunks_processed": len(texts),
+        "time_per_chunk": total_time / len(texts),
+        "embedding_dimension": embeddings.shape[1],
+        "total_embeddings": embeddings.shape[0]
+    }
+    
+    print(f"✓ Processed {len(texts)} chunks in {total_time:.2f}s ({total_time/len(texts):.4f}s per chunk)")
+    print(f"  Embedding dimension: {embeddings.shape[1]}")
+    
+    # Save embeddings and metrics
+    results_data = {
+        "embeddings": embeddings.tolist(),
+        "metadata": metrics
+    }
+    
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(results_data, f, indent=2)
+    
+    print(f"  Results saved to: {output_file}")
+    return metrics
+
+
+def main():
+    """Main function for embedding generation and benchmarking."""
     parser = argparse.ArgumentParser(description="Generate and save embeddings for code chunks")
-    parser.add_argument('--pooling-method', type=str, choices=['mean','cls','pooler'], default='mean', help='Pooling method for HF models')
+    parser.add_argument('--pooling-method', type=str, choices=['mean','cls','pooler'], 
+                       default='mean', help='Pooling method for HF models')
     args = parser.parse_args()
 
     pooling_method = args.pooling_method
-    # Load your generated code chunks
+    
+    # Load code chunks
     chunks_file = Path("data") / "code_chunks_clean.json"
     if not chunks_file.exists():
         print(f"Error: {chunks_file} not found. Please run code_parser_clean.py first.")
-        exit(1)
+        return
 
     with open(chunks_file, 'r', encoding='utf-8') as f:
         all_chunks = json.load(f)
 
-    # Process all chunks for complete coverage
-    sample_size = len(all_chunks)  # Use all chunks instead of limiting to 100
-    sample_chunks = all_chunks
-    sample_texts = [chunk['content'] for chunk in sample_chunks]
+    # Use all chunks for complete coverage
+    sample_texts = [chunk['content'] for chunk in all_chunks]
     
     print(f"\n--- Experimenting with {len(sample_texts)} code chunks ---")
 
@@ -179,20 +277,47 @@ if __name__ == "__main__":
         }, f, indent=2)
     print(f"\nBoth model configurations saved to {model_config_path}")
     
-    # Also save chunk metadata for reference
-    chunk_metadata_file = embeddings_dir / "unixcoder_chunk_metadata.json"
-    chunk_metadata = [
-        {
-            "index": i,
-            "chunk_id": chunk["id"],
-            "file_path": chunk["file_path"],
-            "start_line": chunk["start_line"],
-            "end_line": chunk["end_line"],
-            "function_name": chunk.get("function_name"),
-            "class_name": chunk.get("class_name")
+    print(f"Loaded {len(all_chunks)} code chunks for processing.")
+    
+    # Define models to benchmark
+    models_to_test = {
+        "unixcoder": {
+            "model_name": "microsoft/unixcoder-base",
+            "model_type": "huggingface_automodel",
+            "device": DEVICE
+        },
+        "sbert": {
+            "model_name": "all-MiniLM-L6-v2", 
+            "model_type": "sentence_transformer",
+            "device": DEVICE
         }
-        for i, chunk in enumerate(sample_chunks)
-    ]
-    with open(chunk_metadata_file, 'w') as f:
-        json.dump(chunk_metadata, f, indent=2)
-    print(f"Chunk metadata saved to {chunk_metadata_file}")
+    }
+    
+    # Create output directories
+    results_dir = Path("data") / "embeddings"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Benchmark each model
+    all_results = {}
+    for model_key, model_config in models_to_test.items():
+        output_file = results_dir / f"{model_key}_embeddings.json"
+        try:
+            metrics = benchmark_model(sample_texts, model_config, output_file)
+            all_results[model_key] = metrics
+        except Exception as e:
+            print(f"Error processing {model_key}: {e}")
+            continue
+    
+    # Save consolidated results
+    summary_file = results_dir / "embedding_benchmark_summary.json"
+    with open(summary_file, 'w', encoding='utf-8') as f:
+        json.dump(all_results, f, indent=2)
+    
+    print(f"\n=== Benchmark Summary ===")
+    for model_key, metrics in all_results.items():
+        print(f"{model_key}: {metrics['chunks_processed']} chunks in {metrics['total_time_seconds']:.2f}s")
+    print(f"Summary saved to: {summary_file}")
+
+
+if __name__ == "__main__":
+    main()

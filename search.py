@@ -1,251 +1,321 @@
+"""
+Comprehensive Code Search System
+
+This module provides a multi-method search interface for C++ codebases using:
+1. Keyword Search: Exact text matching with fuzzy search capabilities
+2. UniXcoder: Code structure and programming pattern search
+3. SBERT: Semantic understanding and conceptual search
+
+The system integrates ChromaDB for vector storage and provides an interactive
+comparison interface for evaluating different search approaches.
+"""
+
+import os
+import re
+from pathlib import Path
+from typing import List, Dict, Tuple, Optional
+from dataclasses import dataclass
+
 import torch
+import numpy as np
+import chromadb
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
-import numpy as np
-import os
-import chromadb
-import requests
-import json
 
-# --- Initialize ChromaDB Client ---
+try:
+    from fuzzywuzzy import fuzz
+    FUZZY_AVAILABLE = True
+except ImportError:
+    FUZZY_AVAILABLE = False
+    print("Warning: fuzzywuzzy not available. Fuzzy matching disabled.")
+
+# Configuration
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+UNIXCODER_MODEL_NAME = 'microsoft/unixcoder-base'
+MINILM_MODEL_NAME = 'all-MiniLM-L6-v2'
+
+# Initialize ChromaDB and Models
+print(f"Using device: {DEVICE}")
 client = chromadb.PersistentClient(path="./data/chroma_db")
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-# --- Load Models and Tokenizers ONCE ---
-DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
-print(f"Using device: {DEVICE}")
-
-# UniXcoder
-UNIXCODER_MODEL_NAME = 'microsoft/unixcoder-base'
+# Load models once at startup
 tokenizer_unixcoder = AutoTokenizer.from_pretrained(UNIXCODER_MODEL_NAME)
 model_unixcoder = AutoModel.from_pretrained(UNIXCODER_MODEL_NAME).to(DEVICE)
 model_unixcoder.eval()
 
-# Sentence-BERT
-MINILM_MODEL_NAME = 'all-MiniLM-L6-v2'
 model_minilm = SentenceTransformer(MINILM_MODEL_NAME, device=DEVICE)
-
 print("Models loaded successfully!")
 
-# --- LLM Query Refinement Configuration ---
-QUERY_REFINEMENT_CONFIG = {
-    "enabled": True,
-    "ollama_url": "http://localhost:11434",
-    "model": "deepseek-coder:latest",
-    "fallback_model": "llama3.2:latest",
-    "show_refinement": True,
-    "max_tokens": 50,  # Reduced for shorter responses
-    "temperature": 0.1,
-    "timeout": 10  # Reduced timeout for faster responses
-}
-
-def call_ollama(prompt: str, model: str = None) -> str:
-    """
-    Call Ollama API to generate text
-    """
-    model = model or QUERY_REFINEMENT_CONFIG["model"]
+@dataclass
+class KeywordMatch:
+    """Represents a keyword search match with scoring information."""
+    file_path: Path
+    content: str
+    start_line: int
+    end_line: int
+    function_name: Optional[str] = None
+    class_name: Optional[str] = None
+    score: float = 0.0
+    match_type: str = "content"
+    matched_keywords: List[str] = None
+    context: str = ""
     
-    try:
-        response = requests.post(
-            f"{QUERY_REFINEMENT_CONFIG['ollama_url']}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": QUERY_REFINEMENT_CONFIG["temperature"],
-                    "num_predict": QUERY_REFINEMENT_CONFIG["max_tokens"]
-                }
-            },
-            timeout=QUERY_REFINEMENT_CONFIG["timeout"]
+    def __post_init__(self):
+        if self.matched_keywords is None:
+            self.matched_keywords = []
+    
+    def to_dict(self) -> Dict:
+        """Convert to dictionary for compatibility with other search methods."""
+        return {
+            "file_path": str(self.file_path),
+            "content": self.content,
+            "start_line": self.start_line,
+            "end_line": self.end_line,
+            "function_name": self.function_name,
+            "class_name": self.class_name,
+            "score": self.score,
+            "match_type": self.match_type,
+            "matched_keywords": self.matched_keywords,
+            "context": self.context,
+            "similarity_score": self.score
+        }
+
+class KeywordSearchEngine:
+    """Keyword-based search engine for C++ code files with fuzzy matching support."""
+    
+    # File extensions and common stop words
+    CPP_EXTENSIONS = {'.cpp', '.cxx', '.cc', '.h', '.hpp', '.hxx', '.c'}
+    STOP_WORDS = {
+        'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of',
+        'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during', 'before',
+        'after', 'above', 'below', 'between', 'among', 'this', 'that', 'these', 'those'
+    }
+
+    def __init__(self, verbose: bool = False, fuzzy_threshold: int = 80, context_lines: int = 2):
+        """Initialize the keyword search engine with configuration options."""
+        self.verbose = verbose
+        self.fuzzy_threshold = fuzzy_threshold
+        self.context_lines = context_lines
+        self.file_cache = {}
+        
+        # Regex patterns for C++ parsing
+        self.function_pattern = re.compile(
+            r'^\s*(?:virtual\s+)?(?:static\s+)?(?:inline\s+)?'
+            r'(?:const\s+)?[\w:*&<>\s]+\s+'
+            r'(\w+)\s*\([^)]*\)\s*(?:const\s*)?(?:override\s*)?[{;]',
+            re.MULTILINE
         )
         
-        if response.status_code == 200:
-            return response.json()["response"].strip()
-        else:
-            print(f"Ollama API error: {response.status_code}")
-            return None
+        self.class_pattern = re.compile(
+            r'^\s*(?:template\s*<[^>]*>\s*)?'
+            r'(?:class|struct)\s+(\w+)',
+            re.MULTILINE
+        )
+
+    def _extract_keywords(self, query: str) -> List[str]:
+        """Extract meaningful keywords from query, filtering out stop words."""
+        words = re.findall(r'\b\w+\b', query.lower())
+        keywords = [word for word in words 
+                   if len(word) > 2 and word not in self.STOP_WORDS]
+        if len(keywords) > 1:
+            keywords.append(query.lower().strip())
+        return keywords
+
+    def _parse_file(self, file_path: Path) -> Dict:
+        """Parse C++ file to extract functions and classes with caching."""
+        if file_path in self.file_cache:
+            return self.file_cache[file_path]
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
             
-    except Exception as e:
-        print(f"Error calling Ollama: {e}")
-        return None
-
-
-
-def refine_query_code_specific(query: str) -> str:
-    """
-    Refine query using code-specific enhancement
-    """
-    prompt = f"""Add programming terms to this query while keeping ALL original words:
-
-"{query}"
-
-Rules:
-- Keep every original word exactly
-- Add 1-3 programming terms: function, method, implementation, algorithm, behavior, code
-- Maximum 15 words total
-
-Enhanced query:"""
-    
-    refined = call_ollama(prompt, QUERY_REFINEMENT_CONFIG["fallback_model"])
-    if refined:
-        # Clean up the response - take first line that looks reasonable
-        lines = refined.split('\n')
-        for line in lines:
-            line = line.strip()
-            # Skip empty lines and instructional text
-            if (line and 
-                not line.startswith(('Enhanced', 'Query:', 'Here', 'The', 'Original:', 'CRITICAL:', 'Rules:', 'Add', 'Keep', 'Maximum')) and
-                len(line) > len(query) * 0.8):  # Must be reasonably similar length
+            lines = content.splitlines()
+            
+            functions = []
+            for match in self.function_pattern.finditer(content):
+                func_name = match.group(1)
+                start_pos = match.start()
+                start_line = content[:start_pos].count('\n') + 1
+                end_line = min(start_line + 20, len(lines))
                 
-                refined = line.replace('"', '').replace("'", "").strip()
-                # Remove parenthetical explanations
-                if '(' in refined:
-                    refined = refined.split('(')[0].strip()
+                functions.append({
+                    'name': func_name,
+                    'start_line': start_line,
+                    'end_line': end_line,
+                    'content': '\n'.join(lines[start_line-1:end_line])
+                })
+            
+            classes = []
+            for match in self.class_pattern.finditer(content):
+                class_name = match.group(1)
+                start_pos = match.start()
+                start_line = content[:start_pos].count('\n') + 1
                 
-                # Basic validation
-                if len(refined.split()) <= 15 and len(refined) >= len(query):
-                    # Quick check that key domain terms are preserved
-                    original_lower = query.lower()
-                    refined_lower = refined.lower()
-                    
-                    # Check for key terms like 'ase walker', 'microtubule', etc.
-                    key_phrases = []
-                    if 'ase walker' in original_lower:
-                        key_phrases.append('ase walker')
-                    if 'microtubule' in original_lower:
-                        key_phrases.append('microtubule')
-                    if 'plus end' in original_lower:
-                        key_phrases.append('plus end')
-                    
-                    # Ensure key phrases are preserved
-                    if all(phrase in refined_lower for phrase in key_phrases):
-                        return refined
-    
-    return query
+                classes.append({
+                    'name': class_name,
+                    'start_line': start_line
+                })
+            
+            file_info = {
+                'content': content,
+                'lines': lines,
+                'functions': functions,
+                'classes': classes
+            }
+            
+            self.file_cache[file_path] = file_info
+            return file_info
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"Error parsing {file_path}: {e}")
+            return {'content': '', 'lines': [], 'functions': [], 'classes': []}
 
-def refine_query_with_llm(query: str, method: str = "code") -> tuple:
-    """
-    Refine query using LLM with code-specific enhancement
-    
-    Args:
-        query: Original query
-        method: "code" or "none"
-    
-    Returns:
-        tuple: (original_query, refined_query, method_used)
-    """
-    if not QUERY_REFINEMENT_CONFIG["enabled"] or method == "none":
-        return query, query, "none"
-    
-    original_query = query
-    
-    if method == "code":
-        refined = refine_query_code_specific(query)
-        return original_query, refined, "code-specific"
-    
-    return original_query, query, "none"
+    def _calculate_keyword_score(self, text: str, keywords: List[str]) -> Tuple[float, List[str]]:
+        """Calculate match score for text against keywords with fuzzy matching."""
+        text_lower = text.lower()
+        matched_keywords = []
+        total_score = 0.0
+        
+        for keyword in keywords:
+            # Exact match scoring
+            exact_matches = text_lower.count(keyword)
+            if exact_matches > 0:
+                matched_keywords.append(keyword)
+                total_score += exact_matches * 10
+                continue
+            
+            # Fuzzy match scoring (if available)
+            if FUZZY_AVAILABLE and len(keyword) > 3:
+                words_in_text = re.findall(r'\b\w+\b', text_lower)
+                best_fuzzy_score = 0
+                
+                for word in words_in_text:
+                    if len(word) > 2:
+                        fuzzy_score = fuzz.ratio(keyword, word)
+                        if fuzzy_score >= self.fuzzy_threshold:
+                            matched_keywords.append(f"{keyword}~{word}")
+                            best_fuzzy_score = max(best_fuzzy_score, fuzzy_score)
+                
+                if best_fuzzy_score > 0:
+                    total_score += (best_fuzzy_score / 100.0) * 5
+        
+        return total_score, matched_keywords
 
-def get_hf_embedding(query_text: str, model, tokenizer):
-    """
-    Generate embedding using a pre-loaded HuggingFace model and tokenizer.
-    """
-    encoded_input = tokenizer([query_text], padding=True, truncation=True, max_length=512, return_tensors='pt').to(DEVICE)
+    def search_directory(self, directory: Path, query: str, max_results: int = 20) -> List[KeywordMatch]:
+        """Search directory for keyword matches in C++ files."""
+        keywords = self._extract_keywords(query)
+        all_matches = []
+        
+        for root, _, files in os.walk(directory):
+            for filename in files:
+                if Path(filename).suffix.lower() in self.CPP_EXTENSIONS:
+                    file_path = Path(root) / filename
+                    try:
+                        file_info = self._parse_file(file_path)
+                        
+                        # Search functions
+                        for func in file_info['functions']:
+                            name_score, name_matches = self._calculate_keyword_score(func['name'], keywords)
+                            content_score, content_matches = self._calculate_keyword_score(func['content'], keywords)
+                            
+                            if name_score > 0 or content_score > 0:
+                                all_matches.append(KeywordMatch(
+                                    file_path=file_path,
+                                    content=func['content'][:500] + "..." if len(func['content']) > 500 else func['content'],
+                                    start_line=func['start_line'],
+                                    end_line=func['end_line'],
+                                    function_name=func['name'],
+                                    score=name_score * 2 + content_score,
+                                    match_type="function_name" if name_score > content_score else "content",
+                                    matched_keywords=name_matches + content_matches
+                                ))
+                        
+                        # Search classes
+                        for cls in file_info['classes']:
+                            name_score, name_matches = self._calculate_keyword_score(cls['name'], keywords)
+                            if name_score > 0:
+                                start_line = cls['start_line']
+                                end_line = min(start_line + 20, len(file_info['lines']))
+                                class_content = '\n'.join(file_info['lines'][start_line-1:end_line])
+                                
+                                all_matches.append(KeywordMatch(
+                                    file_path=file_path,
+                                    content=class_content,
+                                    start_line=start_line,
+                                    end_line=end_line,
+                                    class_name=cls['name'],
+                                    score=name_score * 1.5,
+                                    match_type="class_name",
+                                    matched_keywords=name_matches
+                                ))
+                                
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"Error searching {file_path}: {e}")
+        
+        all_matches.sort(key=lambda x: x.score, reverse=True)
+        return all_matches[:max_results]
+
+
+# Embedding and Search Functions
+def get_hf_embedding(query_text: str, model, tokenizer) -> np.ndarray:
+    """Generate normalized embeddings using HuggingFace model."""
+    encoded_input = tokenizer([query_text], padding=True, truncation=True, 
+                             max_length=512, return_tensors='pt').to(DEVICE)
     
     with torch.no_grad():
         model_output = model(**encoded_input)
     
-    # Mean pooling (consistent with embedder.py)
+    # Mean pooling
     token_embeddings = model_output.last_hidden_state
     attention_mask = encoded_input['attention_mask']
     input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
     sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
     sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
     
-    # Get mean pooled embeddings
     embeddings = (sum_embeddings / sum_mask).cpu().numpy()
-    
-    # Normalize embeddings for consistent distance calculation
     norm = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    normalized_embeddings = embeddings / np.maximum(norm, 1e-8)
-    
-    return normalized_embeddings
+    return embeddings / np.maximum(norm, 1e-8)
 
-def get_sbert_embedding(query_text: str, model):
-    """
-    Generate embedding using a pre-loaded Sentence-BERT model.
-    """
+
+def get_sbert_embedding(query_text: str, model) -> np.ndarray:
+    """Generate normalized embeddings using Sentence-BERT model."""
     embeddings = model.encode([query_text], convert_to_numpy=True)
-    # Normalize to match stored embeddings (consistent with embedder.py)
     norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    normalized_embeddings = embeddings / np.maximum(norms, 1e-8)
-    return normalized_embeddings
+    return embeddings / np.maximum(norms, 1e-8)
 
-def get_query_embedding(query_text: str, model_type: str = 'unixcoder'):
-    """
-    Generate query embedding using specified model type.
-    """
+
+def get_query_embedding(query_text: str, model_type: str = 'unixcoder') -> np.ndarray:
+    """Get query embedding based on model type."""
     if model_type.lower() == 'unixcoder':
         return get_hf_embedding(query_text, model_unixcoder, tokenizer_unixcoder)
     elif model_type.lower() in ['minilm', 'sentence_bert', 'sbert']:
         return get_sbert_embedding(query_text, model_minilm)
     else:
-        raise ValueError(f"Unsupported model_type: {model_type}. Choose 'unixcoder' or 'minilm'.")
+        raise ValueError(f"Unsupported model_type: {model_type}")
 
-def search_code(query_text: str, model_type: str = 'unixcoder', k: int = 5, enable_refinement: bool = True):
-    """
-    Search code chunks using the collection created by ingester.py
-    
-    Args:
-        query_text (str): Natural language query
-        model_type (str): 'unixcoder' or 'minilm' - determines which collection to use
-        k (int): Number of results to return
-        enable_refinement (bool): Whether to use LLM query refinement
-    
-    Returns:
-        list: List of dictionaries containing search results
-    """
+
+# Initialize search engine
+keyword_engine = KeywordSearchEngine(verbose=False)
+
+def search_code(query_text: str, model_type: str = 'unixcoder', k: int = 5) -> List[Dict]:
+    """Search code using vector embeddings (UniXcoder or SBERT)."""
     try:
-        # Refine query if enabled
-        original_query = query_text
-        refined_query = query_text
-        refinement_method = "none"
+        collection_name = ("unixcoder_snippets" if model_type.lower() == 'unixcoder' 
+                          else "sbert_snippets")
         
-        if enable_refinement and QUERY_REFINEMENT_CONFIG["enabled"]:
-            original_query, refined_query, refinement_method = refine_query_with_llm(query_text, "code")
-            
-            # Show refinement for transparency
-            if QUERY_REFINEMENT_CONFIG["show_refinement"] and refined_query != original_query:
-                print(f"🔍 Original query: '{original_query}'")
-                print(f"🤖 Refined query:  '{refined_query}' [{refinement_method}]")
-                print("-" * 60)
-        
-        # Use refined query for search
-        search_query = refined_query
-        
-        # Map model type to collection name (matches ingester.py naming)
-        if model_type.lower() == 'unixcoder':
-            collection_name = "unixcoder_snippets"
-        elif model_type.lower() in ['minilm', 'sentence_bert', 'sbert']:
-            collection_name = "sbert_snippets"
-        else:
-            raise ValueError(f"Unsupported model_type: {model_type}. Choose 'unixcoder' or 'minilm'.")
-        
-        # Get the appropriate collection
         collection = client.get_collection(name=collection_name)
+        query_vector = get_query_embedding(query_text, model_type)
         
-        # Generate query embedding using the refined query
-        query_vector = get_query_embedding(search_query, model_type)
-        
-        # Perform search
         results = collection.query(
             query_embeddings=query_vector.tolist(),
             n_results=k,
             include=["documents", "metadatas", "distances"]
         )
         
-        # Process results
         retrieved_chunks = []
         if results['documents'] and results['documents'][0]:
             ids = results.get('ids', [[]])[0]
@@ -256,19 +326,10 @@ def search_code(query_text: str, model_type: str = 'unixcoder', k: int = 5, enab
             for i, doc in enumerate(documents):
                 raw_distance = distances[i]
                 
-                # Handle different distance metrics:
-                # All models use normalized embeddings, so we expect distances in [0, 2] range
-                # ChromaDB likely uses L2 distance on normalized vectors
-                
+                # Different similarity calculations for different models
                 if model_type.lower() == 'unixcoder':
-                    # UniXcoder: normalized embeddings with L2 distance
-                    # Convert L2 distance to cosine-like similarity
-                    # For normalized vectors: L2_dist = sqrt(2 * (1 - cosine_similarity))
-                    # So: cosine_similarity = 1 - (L2_dist^2 / 2)
-                    similarity = max(0.0, 1 - (raw_distance ** 2) / 2)
+                    similarity = max(0.0, 1 - raw_distance / 2)
                 else:
-                    # Sentence-BERT: normalized embeddings with L2 distance
-                    # Same formula as UniXcoder since both are normalized
                     similarity = max(0.0, 1 - (raw_distance ** 2) / 2)
                 
                 retrieved_chunks.append({
@@ -279,104 +340,210 @@ def search_code(query_text: str, model_type: str = 'unixcoder', k: int = 5, enab
                     'similarity_score': similarity,
                     'raw_distance': raw_distance,
                     'model_type': model_type,
-                    'original_query': original_query,
-                    'refined_query': refined_query,
-                    'refinement_method': refinement_method
+                    'query': query_text
                 })
         
         return retrieved_chunks
         
     except Exception as e:
         print(f"Search error for {model_type}: {e}")
-        # Fallback to original query if refinement fails
-        if enable_refinement and query_text != original_query:
-            print(f"🔄 Falling back to original query: '{original_query}'")
-            return search_code(original_query, model_type, k, enable_refinement=False)
         return []
 
-def print_results(results, query, model_type):
-    """
-    Print search results in a formatted way
-    """
+
+def search_keyword(query_text: str, k: int = 5) -> List[Dict]:
+    """Search using keyword matching."""
+    try:
+        directory = Path('manuel_natcom/src/sim/hands')
+        
+        if not directory.exists():
+            print(f"Warning: Directory {directory} not found for keyword search")
+            return []
+        
+        matches = keyword_engine.search_directory(directory, query_text, max_results=k)
+        
+        results = []
+        for match in matches:
+            normalized_score = min(1.0, match.score / 50.0)
+            
+            result = {
+                'id': f"kw_{match.start_line}_{match.file_path.name}",
+                'content': match.content,
+                'metadata': {
+                    'file_path': str(match.file_path),
+                    'start_line': match.start_line,
+                    'end_line': match.end_line,
+                    'function_name': match.function_name,
+                    'class_name': match.class_name,
+                    'match_type': match.match_type,
+                    'matched_keywords': match.matched_keywords
+                },
+                'distance': 1.0 - normalized_score,
+                'similarity_score': normalized_score,
+                'raw_distance': 1.0 - normalized_score,
+                'model_type': 'keyword',
+                'query': query_text
+            }
+            results.append(result)
+        
+        return results
+        
+    except Exception as e:
+        print(f"Keyword search error: {e}")
+        return []
+
+
+# Display and Utility Functions
+def get_model_display_name(model_type: str) -> str:
+    """Get meaningful display names that highlight each model's strengths."""
+    model_names = {
+        'keyword': 'EXACT MATCH (Literal Text)',
+        'unixcoder': 'CODE STRUCTURE (Programming Patterns)', 
+        'minilm': 'SEMANTIC (Conceptual Understanding)',
+        'sbert': 'SEMANTIC (Conceptual Understanding)',
+        'sentence-bert': 'SEMANTIC (Conceptual Understanding)'
+    }
+    return model_names.get(model_type.lower(), model_type.upper())
+
+def print_results(results: List[Dict], query: str, model_type: str) -> None:
+    """Print search results in a clean, formatted layout."""
     if not results:
-        print(f"No results found for {model_type.upper()}.")
+        print(f"No results found for {get_model_display_name(model_type)}.")
         return
     
-    print(f"\n🔍 Search Results for: '{query}' [{model_type.upper()}]")
-    print("=" * 60)
+    print(f"\n{get_model_display_name(model_type)} Results for: '{query}'")
+    print("=" * 70)
     
     for i, result in enumerate(results, 1):
         metadata = result['metadata']
         score = result['similarity_score']
         
-        print(f"\n📄 Result {i} (Similarity: {score:.3f}, Distance: {result.get('raw_distance', 0):.3f})")
-        print(f"📁 File: {metadata.get('file_path', 'Unknown')}")
-        print(f"📍 Lines: {metadata.get('start_line', '?')}-{metadata.get('end_line', '?')}")
+        file_path = metadata.get('file_path', 'Unknown')
+        file_name = file_path.split('/')[-1] if '/' in file_path else file_path
+        
+        print(f"\n{i}. Score: {score:.3f}")
+        print(f"   File: {file_name} (lines {metadata.get('start_line', '?')}-{metadata.get('end_line', '?')})")
+        print(f"   Path: {file_path}")
         
         if metadata.get('function_name') and metadata['function_name'] != 'None':
-            print(f"⚙️  Function: {metadata['function_name']}")
+            print(f"   Function: {metadata['function_name']}")
         if metadata.get('class_name') and metadata['class_name'] != 'None':
-            print(f"🏛️  Class: {metadata['class_name']}")
+            print(f"   Class: {metadata['class_name']}")
         
-        # Show code preview
+        # Additional info for keyword search
+        if model_type.lower() == 'keyword':
+            if metadata.get('match_type'):
+                print(f"   Match Type: {metadata['match_type']}")
+            if metadata.get('matched_keywords'):
+                keywords = [kw.split('~')[0] for kw in metadata['matched_keywords']]
+                print(f"   Matched: {', '.join(set(keywords))}")
+        
+        # Code preview
         content = result['content']
-        preview = content[:200] + "..." if len(content) > 200 else content
-        print(f"📝 Code Preview:")
-        print("```cpp")
-        print(preview)
-        print("```")
-        print("-" * 60)
+        lines = content.split('\n')
+        preview_lines = []
+        for line in lines[:5]:
+            clean_line = line.strip()
+            if clean_line and not clean_line.startswith('//'):
+                preview_lines.append(clean_line)
+                if len(preview_lines) >= 3:
+                    break
+        
+        if preview_lines:
+            print(f"   Code: {' | '.join(preview_lines)}")
+        
+        print("-" * 70)
 
-def compare_models(query: str, k: int = 3, enable_refinement: bool = True):
-    """
-    Compare search results from UniXcoder and Sentence-BERT models side by side
-    """
+def compare_models(query: str, k: int = 5) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """Compare search results from all three search methods."""
     print(f"\n{'='*80}")
-    refinement_note = " (with LLM refinement)" if enable_refinement else " (original query)"
-    print(f"🔀 MODEL COMPARISON FOR QUERY: '{query}'{refinement_note}")
+    print(f"SEARCH COMPARISON: '{query}'")
     print(f"{'='*80}")
     
-    # Search with both models
-    unixcoder_results = search_code(query, model_type='unixcoder', k=k, enable_refinement=enable_refinement)
-    sbert_results = search_code(query, model_type='minilm', k=k, enable_refinement=enable_refinement)
+    # Execute all searches
+    keyword_results = search_keyword(query, k=k)
+    unixcoder_results = search_code(query, model_type='unixcoder', k=k)
+    sbert_results = search_code(query, model_type='minilm', k=k)
     
-    # Display results side by side (summary)
-    print(f"\n📊 QUICK COMPARISON (Top {k} results):")
-    print("-" * 70)
-    print(f"{'RANK':<4} {'UNIXCODER':<30} {'SENTENCE-BERT':<30}")
-    print("-" * 70)
+    # Quick comparison table
+    print(f"\nQUICK COMPARISON (Top 5 results):")
+    print("-" * 110)
+    print(f"{'RANK':<4} {'EXACT MATCH':<35} {'CODE STRUCTURE':<35} {'SEMANTIC':<35}")
+    print("-" * 110)
     
-    for i in range(max(len(unixcoder_results), len(sbert_results))):
+    for i in range(5):
+        keyword_info = ""
         unixcoder_info = ""
         sbert_info = ""
+        
+        if i < len(keyword_results):
+            kw_meta = keyword_results[i]['metadata']
+            kw_score = keyword_results[i]['similarity_score']
+            kw_name = kw_meta.get('function_name') or kw_meta.get('class_name') or 'content'
+            kw_file = kw_meta.get('file_path', '').split('/')[-1] if kw_meta.get('file_path') else ''
+            keyword_info = f"{kw_file[:15]} - {kw_name[:15]} ({kw_score:.3f})"
         
         if i < len(unixcoder_results):
             ux_meta = unixcoder_results[i]['metadata']
             ux_score = unixcoder_results[i]['similarity_score']
-            unixcoder_info = f"{ux_meta.get('function_name', 'Unknown')[:22]} ({ux_score:.3f})"
+            ux_name = ux_meta.get('function_name', 'Unknown')
+            ux_file = ux_meta.get('file_path', '').split('/')[-1] if ux_meta.get('file_path') else ''
+            unixcoder_info = f"{ux_file[:15]} - {ux_name[:15]} ({ux_score:.3f})"
         
         if i < len(sbert_results):
             sb_meta = sbert_results[i]['metadata']
             sb_score = sbert_results[i]['similarity_score']
-            sbert_info = f"{sb_meta.get('function_name', 'Unknown')[:22]} ({sb_score:.3f})"
+            sb_name = sb_meta.get('function_name', 'Unknown')
+            sb_file = sb_meta.get('file_path', '').split('/')[-1] if sb_meta.get('file_path') else ''
+            sbert_info = f"{sb_file[:15]} - {sb_name[:15]} ({sb_score:.3f})"
         
-        print(f"{i+1:<4} {unixcoder_info:<30} {sbert_info:<30}")
+        print(f"{i+1:<4} {keyword_info:<35} {unixcoder_info:<35} {sbert_info:<35}")
     
-    # Show refinement info if used
-    if enable_refinement and unixcoder_results:
-        result = unixcoder_results[0]
-        if result.get('refined_query') != result.get('original_query'):
-            print(f"\n🤖 Query refinement applied: {result.get('refinement_method', 'unknown')}")
+    # Top result summary
+    print(f"\nTOP RESULT FROM EACH METHOD:")
+    print("-" * 80)
     
-    # Detailed results for each model
-    print_results(unixcoder_results[:2], query, 'unixcoder')  # Show top 2 detailed
-    print_results(sbert_results[:2], query, 'sentence-bert')  # Show top 2 detailed
+    if keyword_results:
+        kw_best = keyword_results[0]
+        kw_meta = kw_best['metadata']
+        kw_file = kw_meta.get('file_path', 'Unknown').split('/')[-1]
+        print(f"EXACT MATCH: {kw_meta.get('function_name', 'Unknown')} (score: {kw_best['similarity_score']:.3f}) in {kw_file}")
     
-    return unixcoder_results, sbert_results
+    if unixcoder_results:
+        ux_best = unixcoder_results[0]
+        ux_meta = ux_best['metadata']
+        ux_file = ux_meta.get('file_path', 'Unknown').split('/')[-1]
+        print(f"CODE STRUCTURE: {ux_meta.get('function_name', 'Unknown')} (score: {ux_best['similarity_score']:.3f}) in {ux_file}")
+    
+    if sbert_results:
+        sb_best = sbert_results[0]
+        sb_meta = sb_best['metadata']
+        sb_file = sb_meta.get('file_path', 'Unknown').split('/')[-1]
+        print(f"SEMANTIC: {sb_meta.get('function_name', 'Unknown')} (score: {sb_best['similarity_score']:.3f}) in {sb_file}")
+    
+    # Detailed results (top 2 from each method)
+    if keyword_results:
+        print_results(keyword_results[:2], query, 'keyword')
+    if unixcoder_results:
+        print_results(unixcoder_results[:2], query, 'unixcoder')
+    if sbert_results:
+        print_results(sbert_results[:2], query, 'sentence-bert')
+    
+    return keyword_results, unixcoder_results, sbert_results
 
-if __name__ == "__main__":
-    # --- All your startup checks remain the same ---
+
+def search_all_methods(query: str, k: int = 5) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """Search using all three methods and return individual results."""
+    keyword_results = search_keyword(query, k=k)
+    unixcoder_results = search_code(query, model_type='unixcoder', k=k)
+    sbert_results = search_code(query, model_type='minilm', k=k)
+    
+    return keyword_results, unixcoder_results, sbert_results
+
+
+def main():
+    """Main interactive search interface."""
     try:
+        # Verify collections exist
         collections = client.list_collections()
         collection_names = [c.name for c in collections]
         print(f"Available collections: {collection_names}")
@@ -385,27 +552,26 @@ if __name__ == "__main__":
         missing_collections = [col for col in required_collections if col not in collection_names]
         
         if missing_collections:
-            print(f"❌ Missing collections: {missing_collections}")
-            exit(1)
+            print(f"Missing collections: {missing_collections}")
+            return
         
         for col_name in required_collections:
             collection = client.get_collection(col_name)
-            print(f"✅ Collection '{col_name}' loaded with {collection.count()} chunks")
+            print(f"Collection '{col_name}' loaded with {collection.count()} chunks")
             
-        # --- NEW: Interactive Search Loop ---
-        print("\n\n🚀 **Interactive Semantic Code Search with LLM Query Refinement** 🚀")
-        print("Features:")
-        print("  - 🤖 LLM-powered code-specific query refinement using Ollama")
-        print("  - 🔍 Comparison between original and refined queries")
-        print("  - 📊 Side-by-side model comparison (UniXcoder vs Sentence-BERT)")
-        print("  - 🎯 Transparent refinement process")
+        print("\n\nInteractive Code Search System")
+        print("=" * 50)
+        print("Search Methods:")
+        print("  - EXACT MATCH: Literal text and keyword matching")
+        print("  - CODE STRUCTURE: Programming patterns and syntax")
+        print("  - SEMANTIC: Conceptual understanding and meaning")
         print("\nCommands:")
-        print("  - Type your search query to see both comparisons")
+        print("  - Type your search query")
         print("  - 'exit' or 'quit' - End session")
         
         while True:
             print("\n" + "="*80)
-            query = input(f"Enter search query: ")
+            query = input("Enter search query: ")
             
             if query.lower() in ['exit', 'quit']:
                 print("Exiting search. Goodbye!")
@@ -415,21 +581,11 @@ if __name__ == "__main__":
                 print("Query cannot be empty.")
                 continue
 
-            # Compare with and without LLM refinement
-            print(f"\n🔀 Comparing: No Refinement vs Code-Specific Refinement")
-            print("=" * 80)
-            
-            # Test without refinement
-            print("\n1️⃣ Without LLM Refinement:")
-            compare_models(query, k=5, enable_refinement=False)
-            
-            # Test with code-specific refinement
-            print("\n2️⃣ With Code-Specific LLM Refinement:")
-            original, code_refined, method = refine_query_with_llm(query, "code")
-            if code_refined != original:
-                print(f"   📝 Original: '{original}'")
-                print(f"   🔧 Refined:  '{code_refined}' [{method}]")
-            compare_models(query, k=5, enable_refinement=True)
+            compare_models(query, k=5)
 
     except Exception as e:
-        print(f"❌ A critical error occurred: {e}")
+        print(f"A critical error occurred: {e}")
+
+
+if __name__ == "__main__":
+    main()
