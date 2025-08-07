@@ -1,0 +1,21 @@
+# Core ML/AI dependencies
+torch>=2.0.0
+transformers>=4.21.0
+sentence-transformers>=2.2.0
+numpy>=1.21.0
+scikit-learn>=1.1.0
+
+# Vector database
+chromadb>=0.4.0
+
+# Text processing
+fuzzywuzzy[speedup]>=0.18.0
+
+# Web framework
+flask>=3.0.0
+
+# Development tools
+jupyter>=1.0.0
+
+# Optional: for better performance
+accelerate>=0.20.0

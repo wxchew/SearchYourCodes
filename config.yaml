@@ -1,0 +1,107 @@
+# CodeFinder Configuration File
+# Edit this file to customize CodeFinder for your codebase
+
+# =============================================================================
+# CODEBASE SETTINGS - 🚨 IMPORTANT: SET YOUR TARGET CODEBASE HERE
+# =============================================================================
+codebase:
+  # 📁 CURRENT TARGET CODEBASE (for testing from clean state):
+  path: "data/codebases/manuel_natcom/src/sim"
+  
+  # 📝 This path contains a C++ biological simulation codebase with:
+  #    - Motor proteins (kinesin, motor, etc.)
+  #    - Filament structures and dynamics  
+  #    - Mathematical algorithms and physics
+  #    - Object-oriented C++ patterns
+  #    - Total: ~333 files, ~3,348 code chunks
+  
+  # 🔄 TO USE YOUR OWN CODEBASE, change the path above to:
+  # path: "../my_project/src"              # Relative path
+  # path: "~/Documents/code/my_project"    # Home directory 
+  # path: "/absolute/path/to/your/code"    # Absolute path
+  
+  # File extensions to search (add/remove based on your language)
+  extensions:
+    - .cpp    # C++ source files
+    - .cxx    # Alternative C++ extension  
+    - .cc     # Alternative C++ extension
+    - .h      # C/C++ header files
+    - .hpp    # C++ header files
+    - .hxx    # Alternative header extension
+    - .c      # C source files
+  
+  # 🌐 For other languages, replace extensions with:
+  # extensions: [.py, .pyx, .pyi]           # Python
+  # extensions: [.js, .jsx, .ts, .tsx]     # JavaScript/TypeScript  
+  # extensions: [.java]                    # Java
+  # extensions: [.cpp, .h, .py, .js]       # Multi-language
+
+# =============================================================================  
+# SEARCH SETTINGS
+# =============================================================================
+search:
+  max_results_default: 10
+  fuzzy_threshold: 80        # 0-100, higher = stricter fuzzy matching
+  min_chunk_lines: 3         # Minimum lines for a code chunk
+  
+  # Enable/disable search methods
+  methods:
+    keyword_search: true
+    unixcoder: true
+    sbert: true
+
+# =============================================================================
+# MODEL SETTINGS  
+# =============================================================================
+models:
+  # UniXcoder model for code structure search
+  unixcoder:
+    name: "microsoft/unixcoder-base"
+    type: "huggingface_automodel"
+    device: "auto"  # auto, cpu, mps, cuda
+    pooling_method: "mean"  # cls, mean, pooler
+  
+  # Sentence-BERT model for semantic search
+  sbert:
+    name: "all-MiniLM-L6-v2" 
+    type: "sentence_transformer"
+    device: "auto"
+    
+  # Alternative models (commented out by default)
+  # codebert:
+  #   name: "microsoft/codebert-base"
+  #   type: "huggingface_automodel"
+  #   device: "auto"
+  #   pooling_method: "mean"
+  #
+  # codet5p:
+  #   name: "Salesforce/codet5p-220m-bpe"
+  #   type: "huggingface_automodel" 
+  #   device: "auto"
+  #   pooling_method: "mean"
+
+# =============================================================================
+# DATA PATHS (relative to project root)
+# =============================================================================
+data:
+  chroma_db: "data/chroma_db"
+  embeddings: "data/embeddings"
+  processed: "data/processed"
+
+# =============================================================================
+# WEB APPLICATION SETTINGS
+# =============================================================================  
+app:
+  host: "0.0.0.0"
+  port: 8081
+  debug: true
+  max_content_length: 33554432  # 32MB
+  max_code_display_lines: 50
+  max_code_height: 600
+
+# =============================================================================
+# DEVELOPMENT SETTINGS
+# =============================================================================
+dev:
+  verbose_logging: false
+  enable_debug_routes: true
