@@ -56,9 +56,6 @@ chroma.sqlite3
 data/embeddings/
 data/processed/
 
-# Codebase directories (may contain external git repos)
-data/codebases/
-
 # Configuration backups
 config/backup_old_configs/
 config/*.old
