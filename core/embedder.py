@@ -1,5 +1,5 @@
 """
-Embedding Generation System for CodeFinder
+Embedding Generation System for SearchYourCodes
 
 This module provides embedding generation capabilities using various models:
 - HuggingFace AutoModels (e.g., microsoft/unixcoder-base)  

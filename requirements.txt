@@ -1,4 +1,4 @@
-# CodeFinder Dependencies
+# SearchYourCodes Dependencies
 
 # Core ML/AI Libraries
 torch>=2.0.0

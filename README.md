@@ -1,4 +1,4 @@
-# CodeFinder - Intelligent Code Search Platform
+# SearchYourCodes - Intelligent Code Search Platform
 
 🔍 **AI-powered code search** with multiple search methods: exact matching, code structure analysis (UniXcoder), and semantic understanding (SBERT).
 
@@ -74,7 +74,7 @@ Access at: **http://localhost:8081**
 ## 📁 Project Structure
 
 ```
-codefinder/
+SearchYourCodes/
 ├── main.py              # 🚀 Main entry point
 ├── config.yaml          # ⚙️ Configuration
 ├── app/                 # 🌐 Web interface

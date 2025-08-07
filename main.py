@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-CodeFinder - Intelligent Code Search Platform
+SearchYourCodes - Intelligent Code Search Platform
 Main Entry Point
 
-A unified launcher for the CodeFinder system that provides:
+A unified launcher for the SearchYourCodes system that provides:
 - Intelligent code search with multiple AI models
 - Web-based interface for interactive searching
 - Support for multiple programming languages
@@ -35,7 +35,7 @@ def load_config():
 
 def show_config(config):
     """Display current configuration"""
-    print("🔧 CodeFinder Configuration")
+    print("🔧 SearchYourCodes Configuration")
     print("=" * 50)
     print(f"📁 Codebase: {config['codebase']['path']}")
     print(f"📄 Extensions: {', '.join(config['codebase']['extensions'])}")
@@ -82,16 +82,16 @@ def check_setup(config):
 
 def run_setup(config):
     """Run the setup process"""
-    print("🔧 Running CodeFinder Setup...")
+    print("🔧 Running SearchYourCodes Setup...")
     
     # Add current directory to Python path
     sys.path.insert(0, str(Path(__file__).parent))
     
     try:
         # Import and run setup
-        from setup_codefinder_final import CodeFinderSetup
+        from setup_SearchYourCodes_final import SearchYourCodesSetup
         
-        setup = CodeFinderSetup(verbose=True)
+        setup = SearchYourCodesSetup(verbose=True)
         success = setup.run_complete_setup()
         
         if success:
@@ -103,7 +103,7 @@ def run_setup(config):
             
     except ImportError as e:
         print(f"❌ Setup module not found: {e}")
-        print("   Make sure setup_codefinder_final.py exists in project root")
+        print("   Make sure setup_SearchYourCodes_final.py exists in project root")
         return False
 
 
@@ -135,7 +135,7 @@ def test_search(config):
 
 def start_web_app(config):
     """Start the web application"""
-    print("🚀 Starting CodeFinder Web Application...")
+    print("🚀 Starting SearchYourCodes Web Application...")
     
     # Add paths to Python path
     project_root = Path(__file__).parent
@@ -143,7 +143,7 @@ def start_web_app(config):
     
     try:
         # Set configuration in environment for the app to use
-        os.environ['CODEFINDER_CONFIG'] = str(project_root / "config.yaml")
+        os.environ['SearchYourCodes_CONFIG'] = str(project_root / "config.yaml")
         
         # Import and run the Flask app
         from app.views import app
@@ -161,13 +161,13 @@ def start_web_app(config):
         print(f"❌ Web application not found: {e}")
         print("   Make sure app/views.py exists")
     except KeyboardInterrupt:
-        print("\n🛑 CodeFinder stopped by user")
+        print("\n🛑 SearchYourCodes stopped by user")
 
 
 def main():
     """Main function with argument parsing"""
     parser = argparse.ArgumentParser(
-        description="CodeFinder - Intelligent Code Search Platform",
+        description="SearchYourCodes - Intelligent Code Search Platform",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

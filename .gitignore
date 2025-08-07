@@ -47,7 +47,7 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific - Generated/Cache files
-# CodeFinder specific files
+# SearchYourCodes specific files
 # Vector database
 data/chroma_db/
 chroma.sqlite3

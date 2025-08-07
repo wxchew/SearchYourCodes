@@ -1,5 +1,5 @@
 """
-Core modules for CodeFinder - Intelligent Code Search Platform
+Core modules for SearchYourCodes - Intelligent Code Search Platform
 
 This package contains the core functionality for code search and analysis:
 - search: Multi-method search interface (keyword, UniXcoder, SBERT)

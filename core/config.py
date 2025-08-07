@@ -1,5 +1,5 @@
 """
-Configuration Manager for CodeFinder
+Configuration Manager for SearchYourCodes
 
 Unified configuration system that loads from YAML files with hardcoded fallbacks.
 Handles absolute path resolution to avoid fragile relative path issues.
@@ -74,7 +74,7 @@ def load_config() -> Dict[str, Any]:
     # Try to find config file using project root
     project_root = get_project_root()
     config_paths = [
-        os.environ.get('CODEFINDER_CONFIG'),
+        os.environ.get('SearchYourCodes_CONFIG'),
         str(project_root / 'config.yaml'),
         str(Path.cwd() / 'config.yaml')
     ]

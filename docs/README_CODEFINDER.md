@@ -1,11 +1,11 @@
-# CodeFinder - Intelligent Code Search Platform
+# SearchYourCodes - Intelligent Code Search Platform
 
 ## 🚀 Quick Start
 
 ### Option 1: Using the Launcher (Recommended)
 ```bash
 # From project root
-python3 run_codefinder.py
+python3 run_SearchYourCodes.py
 ```
 
 ### Option 2: Direct Execution
@@ -22,7 +22,7 @@ python3 web_app.py
 
 ```
 llm_code_search/
-├── run_codefinder.py          # 🚀 Main launcher script
+├── run_SearchYourCodes.py          # 🚀 Main launcher script
 ├── requirements.txt           # 📦 Python dependencies
 ├── data/                      # 💾 Data files and embeddings
 ├── config/                    # ⚙️ Configuration files
@@ -35,7 +35,7 @@ llm_code_search/
 
 ## 🌐 Access
 
-Once running, access CodeFinder at: **http://localhost:8081**
+Once running, access SearchYourCodes at: **http://localhost:8081**
 
 ## 🔧 Features
 

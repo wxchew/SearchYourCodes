@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-CodeFinder Complete Setup Script - Final Version
+SearchYourCodes Complete Setup Script - Final Version
 
-This script provides a complete, working setup for the CodeFinder system with:
+This script provides a complete, working setup for the SearchYourCodes system with:
 - Proper code parsing using existing CppParser
 - Correct embedding generation matching search.py
 - Quality validation and troubleshooting
 - Multiple approaches to fix common issues
 
-Usage: python setup_codefinder_final.py [options]
+Usage: python setup_SearchYourCodes_final.py [options]
 """
 
 import os
@@ -37,8 +37,8 @@ except ImportError as e:
     print("Make sure you're running from the project root directory")
     sys.exit(1)
 
-class CodeFinderSetup:
-    """Complete CodeFinder setup with validation and troubleshooting."""
+class SearchYourCodesSetup:
+    """Complete SearchYourCodes setup with validation and troubleshooting."""
     
     def __init__(self, verbose: bool = False, fix_unixcoder: bool = False):
         self.verbose = verbose
@@ -437,7 +437,7 @@ class CodeFinderSetup:
     
     def run_complete_setup(self):
         """Run the complete setup process."""
-        print("🚀 CodeFinder Complete Setup")
+        print("🚀 SearchYourCodes Complete Setup")
         print("=" * 80)
         
         try:
@@ -486,13 +486,13 @@ class CodeFinderSetup:
 def main():
     """Main function with argument parsing."""
     parser = argparse.ArgumentParser(
-        description="CodeFinder Complete Setup Script",
+        description="SearchYourCodes Complete Setup Script",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python scripts/setup_codefinder_final.py                    # Basic setup
-  python scripts/setup_codefinder_final.py --verbose          # Detailed output
-  python scripts/setup_codefinder_final.py --fix-unixcoder    # Try UniXcoder fix
+  python scripts/setup_SearchYourCodes_final.py                    # Basic setup
+  python scripts/setup_SearchYourCodes_final.py --verbose          # Detailed output
+  python scripts/setup_SearchYourCodes_final.py --fix-unixcoder    # Try UniXcoder fix
         """
     )
     
@@ -504,7 +504,7 @@ Examples:
     args = parser.parse_args()
     
     # Run setup
-    setup = CodeFinderSetup(verbose=args.verbose, fix_unixcoder=args.fix_unixcoder)
+    setup = SearchYourCodesSetup(verbose=args.verbose, fix_unixcoder=args.fix_unixcoder)
     success = setup.run_complete_setup()
     
     if success:
@@ -514,7 +514,7 @@ Examples:
         print(f"  3. Interactive test: python core/search.py")
         print(f"\\n📚 Documentation:")
         print(f"  - User guide: USER_GUIDE.md")
-        print(f"  - README: README_CODEFINDER.md")
+        print(f"  - README: README_SearchYourCodes.md")
     else:
         print(f"\\n💥 Setup failed. Check errors above.")
         sys.exit(1)

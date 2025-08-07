@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CodeFinder - Intelligent Code Search and Discovery Platform
+SearchYourCodes - Intelligent Code Search and Discovery Platform
 
 A Flask web application that provides an intelligent code search interface
 using multiple search methods: exact keyword matching, code structure analysis
@@ -52,7 +52,7 @@ def cleanup_resources():
 
 def signal_handler(sig, frame):
     """Handle SIGINT (Ctrl+C) gracefully"""
-    print("\n🛑 Shutting down CodeFinder gracefully...")
+    print("\n🛑 Shutting down SearchYourCodes gracefully...")
     cleanup_resources()
     sys.exit(0)
 
@@ -71,7 +71,7 @@ def index():
 @app.route('/test')
 def test():
     """Test endpoint to verify template updates"""
-    return "<h1>Template Test - CodeFinder is working!</h1><p>Layout: Responsive 3-Column Grid</p>"
+    return "<h1>Template Test - SearchYourCodes is working!</h1><p>Layout: Responsive 3-Column Grid</p>"
 
 
 @app.route('/open-file')
@@ -518,7 +518,7 @@ def internal_error(e):
 
 
 if __name__ == '__main__':
-    print("🔍 Starting CodeFinder - Desktop Code Search Platform...")
+    print("🔍 Starting SearchYourCodes - Desktop Code Search Platform...")
     print("🖥️  Optimized for desktop environments")
     print("📋 Features:")
     print("   • Exact Match: Direct keyword search in code")

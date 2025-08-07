@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Configuration Migration Script for CodeFinder
+Configuration Migration Script for SearchYourCodes
 
 This script helps migrate from the old JSON-based configuration system 
 to the new unified YAML configuration system.
@@ -155,7 +155,7 @@ def check_migration_status():
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Migrate CodeFinder configuration files")
+    parser = argparse.ArgumentParser(description="Migrate SearchYourCodes configuration files")
     parser.add_argument("--migrate", action="store_true", help="Perform the migration")
     parser.add_argument("--check", action="store_true", help="Check migration status only")
     
