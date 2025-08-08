@@ -30,8 +30,8 @@ from sentence_transformers import SentenceTransformer
 sys.path.append('core')
 try:
     from config import resolve_codebase_path, get_file_extensions, validate_config
-    from code_parser_clean import CodeChunk, CppParser
-    from search import get_hf_embedding, get_sbert_embedding as search_get_sbert_embedding
+    from core.parsers import CodeChunk, CppParser
+    from core.search import get_hf_embedding, get_sbert_embedding as search_get_sbert_embedding
 except ImportError as e:
     print(f"❌ Error importing modules: {e}")
     print("Make sure you're running from the project root directory")
@@ -360,7 +360,7 @@ class SearchYourCodesSetup:
         print("🔍 Running quality test...")
         
         # Import search functions
-        from search import search_keyword, search_code
+        from core.search import search_keyword, search_code
         
         test_queries = [
             ("motor", "biology term"),

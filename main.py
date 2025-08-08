@@ -146,7 +146,7 @@ def start_web_app(config):
         os.environ['SearchYourCodes_CONFIG'] = str(project_root / "config.yaml")
         
         # Import and run the Flask app
-        from app.views import app
+        from app.main import app
         
         print(f"🌐 Access the interface at: http://localhost:{config['app']['port']}")
         print("💡 Press Ctrl+C to shutdown gracefully")
@@ -159,7 +159,7 @@ def start_web_app(config):
         
     except ImportError as e:
         print(f"❌ Web application not found: {e}")
-        print("   Make sure app/views.py exists")
+        print("   Make sure app/main.py exists")
     except KeyboardInterrupt:
         print("\n🛑 SearchYourCodes stopped by user")
 

@@ -15,11 +15,11 @@ import gc
 from typing import Dict, List, Any, Optional, Tuple
 from flask import Flask, render_template, request, jsonify
 
-# Add core modules to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'core'))
+# Add project root to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 try:
-    from search import compare_models
+    from core.search import compare_models
 except ImportError as e:
     print(f"Error importing search modules: {e}")
     print("Make sure the core modules are available")

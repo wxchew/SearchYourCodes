@@ -94,7 +94,7 @@ def main():
         return
         
     if not chunks_file.exists():
-        print(f"Error: {chunks_file} not found. Please run code_parser_clean.py first.")
+        print(f"Error: {chunks_file} not found. Please run code_parser.py first.")
         return
 
     with open(model_state_file, 'r', encoding='utf-8') as f:

@@ -6,5 +6,5 @@ This package contains the core functionality for code search and analysis:
 - config: Configuration management
 - ingester: Code ingestion and processing
 - embedder: Embedding generation utilities
-- code_parser_clean: Code parsing and chunk extraction
+- parsers: Modular language parsing system
 """

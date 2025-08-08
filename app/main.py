@@ -12,14 +12,15 @@ import sys
 import signal
 import atexit
 import gc
+from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from flask import Flask, render_template, request, jsonify
 
-# Add core modules to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'core'))
+# Add project root to path for imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 try:
-    from search import compare_models
+    from core.search import compare_models
 except ImportError as e:
     print(f"Error importing search modules: {e}")
     print("Make sure the core modules are available")
@@ -175,8 +176,7 @@ def _resolve_file_path(file_path: str) -> str:
     
     # Try to get codebase path from config
     try:
-        sys.path.insert(0, os.path.join(project_root, 'core'))
-        from config import resolve_codebase_path
+        from core.config import resolve_codebase_path
         codebase_path = resolve_codebase_path()
         codebase_relative = os.path.relpath(codebase_path, project_root)
     except:
@@ -423,42 +423,94 @@ def _format_keyword_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any
         return []
     
     formatted = []
-    for result in results:
+    for i, result in enumerate(results):
         try:
-            metadata = result.get('metadata', {})
+            # Extract file path - keyword results have absolute paths
+            file_path = result.get('file_path', 'Unknown')
             
-            # Extract function name from metadata
-            function_name = (metadata.get('function_name') or 
-                           metadata.get('class_name') or
-                           'Code Match')
+            # Convert absolute path to relative path for consistency
+            file_path = _convert_to_relative_path(file_path)
             
-            # Extract file path from metadata
-            file_path = metadata.get('file_path', 'Unknown')
+            # Extract function/content info
+            content = result.get('content', '')
+            matched_keywords = result.get('matched_keywords', [])
             
-            # Extract line numbers from metadata
-            line_start = metadata.get('start_line', 1)
-            line_end = metadata.get('end_line', line_start)
+            # Try to extract a meaningful title from the content
+            function_name = _extract_function_name_from_content(content)
+            if not function_name:
+                if matched_keywords:
+                    function_name = f"Match: {', '.join(matched_keywords)}"
+                else:
+                    function_name = f"Text Match {i+1}"
             
-            # Get match type for additional info
-            match_type = metadata.get('match_type', 'content')
+            # Extract line numbers
+            line_number = result.get('line_number', 1)
             
-            # Read the actual code content from the file at the specific lines
-            code_content = _read_file_lines(file_path, line_start, line_end)
+            # Read the actual code content with context
+            code_content = _read_file_lines(file_path, max(1, line_number-2), line_number+3)
             
             formatted.append({
                 'function': function_name,
                 'file': file_path,
                 'code': code_content,
-                'has_score': False,
-                'line_start': line_start,
-                'line_end': line_end,
-                'match_type': match_type
+                'score': result.get('score', 1.0),
+                'has_score': True,
+                'line_start': line_number,
+                'line_end': line_number
             })
         except Exception as e:
             app.logger.warning(f"Error formatting keyword result: {e}")
             continue
     
     return formatted
+
+
+def _convert_to_relative_path(file_path: str) -> str:
+    """Convert absolute path to relative path from codebase root"""
+    try:
+        # Try to get codebase path from config
+        from core.config import resolve_codebase_path
+        codebase_path = resolve_codebase_path()
+        
+        # Convert to relative path
+        if file_path.startswith(str(codebase_path)):
+            return os.path.relpath(file_path, codebase_path)
+        else:
+            # If not under codebase, try to extract from the path
+            parts = Path(file_path).parts
+            if 'src' in parts:
+                src_idx = parts.index('src')
+                return '/'.join(parts[src_idx:])
+            return file_path
+    except:
+        # Fallback - if absolute path, try to make relative
+        if os.path.isabs(file_path):
+            parts = Path(file_path).parts
+            if 'src' in parts:
+                src_idx = parts.index('src')
+                return '/'.join(parts[src_idx:])
+        return file_path
+
+
+def _extract_function_name_from_content(content: str) -> str:
+    """Extract function name from code content"""
+    import re
+    
+    # Try to find function definitions
+    func_patterns = [
+        r'(?:void|int|double|float|char|bool|string|auto)\s+(\w+)\s*\(',  # C++ function
+        r'(\w+)\s*\([^)]*\)\s*{',  # Function with braces
+        r'class\s+(\w+)',  # Class definition
+        r'struct\s+(\w+)',  # Struct definition
+        r'///.*?(\w+)\s+(?:motor|function|method)',  # Documentation
+    ]
+    
+    for pattern in func_patterns:
+        match = re.search(pattern, content, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    
+    return None
 
 
 def _format_semantic_results(results: List[Dict[str, Any]], method_name: str) -> List[Dict[str, Any]]:
@@ -469,8 +521,24 @@ def _format_semantic_results(results: List[Dict[str, Any]], method_name: str) ->
     formatted = []
     for i, result in enumerate(results):
         try:
-            metadata = result.get('metadata', {})
-            distance = result.get('distance', 0)
+            # Handle both direct result structure and metadata structure
+            if 'metadata' in result:
+                # ChromaDB result format
+                metadata = result.get('metadata', {})
+                distance = result.get('distance', 0)
+                file_path = metadata.get('file_path', 'Unknown')
+                line_start = metadata.get('line_start', metadata.get('start_line', 1))
+                line_end = metadata.get('line_end', metadata.get('end_line', line_start))
+                function_name = metadata.get('function_name', f'Result {i+1}')
+                class_name = metadata.get('class_name', '')
+            else:
+                # Direct result format (what we're actually getting)
+                distance = result.get('distance', 0)
+                file_path = result.get('file_path', 'Unknown')
+                line_start = result.get('start_line', 1)
+                line_end = result.get('end_line', line_start)
+                function_name = result.get('function_name', '')
+                class_name = result.get('class_name', '')
             
             # Convert distance to similarity score (ChromaDB uses cosine distance)
             if distance <= 1:
@@ -481,16 +549,25 @@ def _format_semantic_results(results: List[Dict[str, Any]], method_name: str) ->
             # Ensure similarity is between 0 and 1
             similarity = max(0, min(1, similarity))
             
-            # Get file path and line numbers from metadata
-            file_path = metadata.get('file_path', 'Unknown')
-            line_start = metadata.get('line_start', metadata.get('start_line', 1))
-            line_end = metadata.get('line_end', metadata.get('end_line', line_start))
+            # Create meaningful title
+            if function_name and class_name:
+                title = f"{class_name}::{function_name}"
+            elif function_name:
+                title = function_name
+            elif class_name:
+                title = f"class {class_name}"
+            else:
+                title = f"{method_name} Result {i+1}"
+            
+            # Ensure file path is relative (vector search results should already be relative)
+            if os.path.isabs(file_path):
+                file_path = _convert_to_relative_path(file_path)
             
             # Read the actual code content from the file at the specific lines
             code_content = _read_file_lines(file_path, line_start, line_end)
             
             formatted.append({
-                'function': metadata.get('function_name', f'Result {i+1}'),
+                'function': title,
                 'file': file_path,
                 'code': code_content,
                 'score': round(similarity, 3),
