@@ -360,7 +360,8 @@ class SearchYourCodesSetup:
         print("🔍 Running quality test...")
         
         # Import search functions
-        from core.search import search_keyword, search_code
+        from core.search import search_code
+        from core.keyword_search import search_keyword_chromadb
         
         test_queries = [
             ("motor", "biology term"),
@@ -377,7 +378,7 @@ class SearchYourCodesSetup:
             
             # Test each method
             methods = [
-                ("keyword", lambda: search_keyword(query, k=3)),
+                ("keyword", lambda: search_keyword_chromadb(query, k=3)),
                 ("unixcoder", lambda: search_code(query, model_type='unixcoder', k=3)),
                 ("sbert", lambda: search_code(query, model_type='minilm', k=3))
             ]

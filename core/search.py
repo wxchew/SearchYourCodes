@@ -19,7 +19,7 @@ import chromadb
 from typing import List, Dict, Tuple
 
 # Import the new modular search components
-from core.keyword_search import KeywordSearchEngine, search_keyword
+from core.keyword_search import search_keyword_chromadb
 from core.vector_search import VectorSearchEngine
 from core.search_orchestrator import (
     SearchOrchestrator, 
@@ -83,6 +83,11 @@ def search_code(query_text: str, model_type: str = 'unixcoder', k: int = 5) -> L
     """Legacy function - delegates to VectorSearchEngine."""
     engine = VectorSearchEngine()
     return engine.search_code(query_text, model_type, k)
+
+
+def search_keyword(query_text: str, k: int = 5) -> List[Dict]:
+    """Legacy function - delegates to ChromaDB keyword search."""
+    return search_keyword_chromadb(query_text, k)
 
 
 def main():

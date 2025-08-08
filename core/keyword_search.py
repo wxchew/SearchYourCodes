@@ -1,96 +1,75 @@
 """
-Keyword Search Module
+ChromaDB-based Keyword Search Module
 
-This module provides keyword-based search functionality with fuzzy matching
-capabilities for code search applications.
+This module implements keyword search by querying the existing ChromaDB collections
+instead of re-parsing files. This ensures consistency with vector search and
+leverages the high-quality Tree-sitter parsing already performed.
 
 Features:
-- Exact text matching
-- Fuzzy search using fuzzywuzzy
-- File content parsing and indexing
-- Configurable scoring and context extraction
+- Operates on the same data as vector search
+- Consistent parsing methodology  
+- Fast text search within ChromaDB documents
+- Rich metadata from AST parsing
+- No redundant file parsing
+
+Functions:
+- search_keyword_chromadb: Main keyword search function (backward compatible)
+- ChromaDBKeywordSearch: Advanced keyword search class with additional methods
 """
 
+from typing import List, Dict, Optional, Set
 import re
+import chromadb
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
-
-try:
-    from fuzzywuzzy import fuzz
-    FUZZY_AVAILABLE = True
-except ImportError:
-    FUZZY_AVAILABLE = False
-    print("Warning: fuzzywuzzy not available. Fuzzy matching disabled.")
-
-# Local imports with fallback
-try:
-    from config import resolve_codebase_path, get_file_extensions
-    CONFIG_AVAILABLE = True
-except ImportError:
-    try:
-        from core.config import resolve_codebase_path, get_file_extensions
-        CONFIG_AVAILABLE = True
-    except ImportError:
-        CONFIG_AVAILABLE = False
-        print("Warning: config.py not found, using default settings")
 
 
-@dataclass
-class KeywordMatch:
-    """Represents a keyword search match with associated metadata."""
-    file_path: str
-    line_number: int
-    matched_text: str
-    context: str
-    score: float
-    matched_keywords: List[str]
-    
-    def __post_init__(self):
-        """Ensure score is within valid range."""
-        self.score = max(0.0, min(1.0, self.score))
-    
-    def to_dict(self) -> Dict:
-        """Convert match to dictionary format."""
-        return {
-            'file_path': self.file_path,
-            'line_number': self.line_number,
-            'matched_text': self.matched_text,
-            'context': self.context,
-            'score': self.score,
-            'matched_keywords': self.matched_keywords
-        }
-
-
-class KeywordSearchEngine:
+class ChromaDBKeywordSearch:
     """
-    Keyword-based search engine with fuzzy matching capabilities.
+    Keyword search engine that operates on ChromaDB collections.
     
-    This engine provides exact text matching and fuzzy search functionality
-    for code files, with configurable scoring and context extraction.
+    This engine searches within the documents and metadata already stored
+    in ChromaDB, ensuring consistency with vector search results.
     """
     
-    def __init__(self, verbose: bool = False, fuzzy_threshold: int = 80, context_lines: int = 2):
+    def __init__(self, chroma_db_path: Optional[str] = None, verbose: bool = False):
         """
-        Initialize the keyword search engine.
+        Initialize ChromaDB keyword search.
         
         Args:
+            chroma_db_path: Path to ChromaDB storage
             verbose: Enable verbose logging
-            fuzzy_threshold: Minimum fuzzy match score (0-100)
-            context_lines: Number of context lines to include around matches
         """
         self.verbose = verbose
-        self.fuzzy_threshold = fuzzy_threshold
-        self.context_lines = context_lines
         
-        # Set default file extensions if config is not available
-        if CONFIG_AVAILABLE:
-            self.file_extensions = get_file_extensions()
+        # Initialize ChromaDB client
+        if chroma_db_path is None:
+            try:
+                from core.config import get_chroma_db_path
+                self.chroma_db_path = str(get_chroma_db_path())
+            except ImportError:
+                import os
+                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                self.chroma_db_path = os.path.join(project_root, "data", "chroma_db")
         else:
-            self.file_extensions = {'.cpp', '.cxx', '.cc', '.h', '.hpp', '.hxx', '.py', '.java', '.js', '.ts'}
+            self.chroma_db_path = chroma_db_path
         
-        if self.verbose:
-            print(f"KeywordSearchEngine initialized with fuzzy_threshold={fuzzy_threshold}")
+        self.client = chromadb.PersistentClient(path=self.chroma_db_path)
+        
+        # Cache collections
+        self._collections = {}
+        self._initialize_collections()
+    
+    def _initialize_collections(self):
+        """Initialize and cache available collections."""
+        try:
+            collections = self.client.list_collections()
+            for collection in collections:
+                self._collections[collection.name] = self.client.get_collection(collection.name)
+            
+            if self.verbose:
+                print(f"Initialized {len(self._collections)} collections: {list(self._collections.keys())}")
+        except Exception as e:
+            print(f"Error initializing collections: {e}")
     
     def _extract_keywords(self, query: str) -> List[str]:
         """
@@ -102,233 +81,296 @@ class KeywordSearchEngine:
         Returns:
             List of extracted keywords
         """
-        # Simple keyword extraction - split on whitespace and remove empty strings
+        # Split on whitespace and remove empty strings
         keywords = [word.strip() for word in query.split() if word.strip()]
         return keywords
     
-    def _parse_file(self, file_path: Path) -> Dict:
+    def _calculate_keyword_score(self, text: str, keywords: List[str]) -> float:
         """
-        Parse a file and extract content with line numbers.
+        Calculate relevance score based on keyword matches.
         
         Args:
-            file_path: Path to the file to parse
+            text: Text to search
+            keywords: Keywords to match
             
         Returns:
-            Dictionary with file content and metadata
+            Relevance score between 0 and 1
         """
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-            
-            return {
-                'file_path': str(file_path),
-                'lines': lines,
-                'total_lines': len(lines)
-            }
-        except Exception as e:
-            if self.verbose:
-                print(f"Error parsing file {file_path}: {e}")
-            return None
-    
-    def _extract_context(self, lines: List[str], line_number: int) -> str:
-        """
-        Extract context around a matched line.
+        if not keywords:
+            return 0.0
         
-        Args:
-            lines: List of file lines
-            line_number: Target line number (1-indexed)
-            
-        Returns:
-            Context string with surrounding lines
-        """
-        start = max(0, line_number - self.context_lines - 1)
-        end = min(len(lines), line_number + self.context_lines)
-        
-        context_lines = []
-        for i in range(start, end):
-            marker = ">>> " if i == line_number - 1 else "    "
-            context_lines.append(f"{marker}{i + 1:4d}: {lines[i].rstrip()}")
-        
-        return "\n".join(context_lines)
-    
-    def _calculate_keyword_score(self, text: str, keywords: List[str]) -> Tuple[float, List[str]]:
-        """
-        Calculate relevance score for text based on keywords.
-        
-        Args:
-            text: Text to score
-            keywords: List of keywords to match
-            
-        Returns:
-            Tuple of (score, matched_keywords)
-        """
         text_lower = text.lower()
-        matched_keywords = []
-        total_score = 0.0
+        matches = 0
+        total_keyword_length = 0
         
         for keyword in keywords:
             keyword_lower = keyword.lower()
+            total_keyword_length += len(keyword_lower)
             
-            # Exact match (highest score)
+            # Count exact matches
             if keyword_lower in text_lower:
-                matched_keywords.append(keyword)
-                total_score += 1.0
-            # Fuzzy match if enabled
-            elif FUZZY_AVAILABLE:
-                fuzzy_score = fuzz.partial_ratio(keyword_lower, text_lower)
-                if fuzzy_score >= self.fuzzy_threshold:
-                    matched_keywords.append(keyword)
-                    total_score += fuzzy_score / 100.0
+                matches += 1
+                # Bonus for whole word matches
+                if re.search(r'\b' + re.escape(keyword_lower) + r'\b', text_lower):
+                    matches += 0.5
         
-        # Normalize score by number of keywords
-        if keywords:
-            final_score = total_score / len(keywords)
-        else:
-            final_score = 0.0
+        # Score based on proportion of keywords matched
+        keyword_score = matches / len(keywords)
         
-        return final_score, matched_keywords
+        # Bonus for keyword density
+        if total_keyword_length > 0:
+            density_bonus = min(0.2, (matches * 10) / len(text))
+            keyword_score += density_bonus
+        
+        return min(1.0, keyword_score)
     
-    def search_directory(self, directory: Path, query: str, max_results: int = 20) -> List[KeywordMatch]:
+    def search_collection(self, 
+                         collection_name: str, 
+                         query: str, 
+                         k: int = 10,
+                         filter_metadata: Optional[Dict] = None) -> List[Dict]:
         """
-        Search for keywords in all files within a directory.
+        Search within a specific ChromaDB collection.
         
         Args:
-            directory: Directory to search
+            collection_name: Name of the collection to search
             query: Search query string
-            max_results: Maximum number of results to return
+            k: Maximum number of results
+            filter_metadata: Optional metadata filters
             
         Returns:
-            List of KeywordMatch objects sorted by relevance
+            List of search results with scores
         """
+        if collection_name not in self._collections:
+            if self.verbose:
+                print(f"Collection '{collection_name}' not found")
+            return []
+        
+        collection = self._collections[collection_name]
         keywords = self._extract_keywords(query)
+        
         if not keywords:
             return []
         
-        if self.verbose:
-            print(f"Searching for keywords: {keywords}")
-        
-        matches = []
-        
-        # Find all relevant files
-        files_to_search = []
-        for ext in self.file_extensions:
-            files_to_search.extend(directory.rglob(f"*{ext}"))
-        
-        for file_path in files_to_search:
-            if not file_path.is_file():
-                continue
-                
-            file_data = self._parse_file(file_path)
-            if not file_data:
-                continue
+        try:
+            # Get all documents (we'll score them locally)
+            # ChromaDB doesn't have built-in text search, so we retrieve all and filter
+            all_results = collection.get(
+                include=['documents', 'metadatas'],
+                where=filter_metadata
+            )
             
-            # Search each line in the file
-            for line_num, line in enumerate(file_data['lines'], 1):
-                score, matched_kw = self._calculate_keyword_score(line, keywords)
+            scored_results = []
+            
+            for i, (document, metadata) in enumerate(zip(
+                all_results['documents'], 
+                all_results['metadatas']
+            )):
+                # Generate a doc_id for compatibility
+                doc_id = f"chunk_{i}"
+                # Create searchable text from document and metadata
+                searchable_text = document
                 
-                if score > 0 and matched_kw:
-                    context = self._extract_context(file_data['lines'], line_num)
-                    
-                    match = KeywordMatch(
-                        file_path=str(file_path),
-                        line_number=line_num,
-                        matched_text=line.strip(),
-                        context=context,
-                        score=score,
-                        matched_keywords=matched_kw
-                    )
-                    matches.append(match)
-        
-        # Sort by score (descending) and limit results
-        matches.sort(key=lambda x: x.score, reverse=True)
-        return matches[:max_results]
+                # Add function/class names to searchable text for better matching
+                if metadata.get('function_name'):
+                    searchable_text += f" {metadata['function_name']}"
+                if metadata.get('class_name'):
+                    searchable_text += f" {metadata['class_name']}"
+                if metadata.get('namespace'):
+                    searchable_text += f" {metadata['namespace']}"
+                
+                # Calculate keyword relevance score
+                score = self._calculate_keyword_score(searchable_text, keywords)
+                
+                if score > 0:  # Only include results with matches
+                    result = {
+                        'id': doc_id,
+                        'content': document,
+                        'metadata': metadata,
+                        'score': score,
+                        'relevance_score': score,  # Keyword relevance, not similarity
+                        'score_type': 'relevance',  # Distinguish from cosine similarity
+                        'query': query,
+                        'collection': collection_name
+                    }
+                    scored_results.append(result)
+            
+            # Sort by score and limit results
+            scored_results.sort(key=lambda x: x['score'], reverse=True)
+            return scored_results[:k]
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"Error searching collection '{collection_name}': {e}")
+            return []
     
-    def search_files(self, file_paths: List[Path], query: str, max_results: int = 20) -> List[KeywordMatch]:
+    def search_all_collections(self, 
+                              query: str, 
+                              k: int = 10,
+                              prefer_collection: Optional[str] = None) -> List[Dict]:
         """
-        Search for keywords in specific files.
+        Search across all available collections.
         
         Args:
-            file_paths: List of file paths to search
             query: Search query string
-            max_results: Maximum number of results to return
+            k: Maximum number of results
+            prefer_collection: Collection to prioritize in results
             
         Returns:
-            List of KeywordMatch objects sorted by relevance
+            Unified list of search results
         """
-        keywords = self._extract_keywords(query)
-        if not keywords:
-            return []
+        all_results = []
         
-        matches = []
+        # Search each collection
+        for collection_name in self._collections.keys():
+            collection_results = self.search_collection(collection_name, query, k)
+            all_results.extend(collection_results)
         
-        for file_path in file_paths:
-            if not file_path.is_file():
-                continue
+        # If preferring a specific collection, boost its scores
+        if prefer_collection and prefer_collection in self._collections:
+            for result in all_results:
+                if result['collection'] == prefer_collection:
+                    result['score'] *= 1.2  # 20% boost for preferred collection
+                    result['relevance_score'] = result['score']
+        
+        # Sort by score and limit results
+        all_results.sort(key=lambda x: x['score'], reverse=True)
+        return all_results[:k]
+    
+    def search_by_function(self, function_name: str, k: int = 5) -> List[Dict]:
+        """
+        Search for functions by name.
+        
+        Args:
+            function_name: Function name to search for
+            k: Maximum number of results
             
-            file_data = self._parse_file(file_path)
-            if not file_data:
-                continue
-            
-            # Search each line in the file
-            for line_num, line in enumerate(file_data['lines'], 1):
-                score, matched_kw = self._calculate_keyword_score(line, keywords)
+        Returns:
+            List of function matches
+        """
+        results = []
+        
+        for collection_name in self._collections.keys():
+            # Use metadata filtering for exact function name matches
+            try:
+                collection = self._collections[collection_name]
+                exact_matches = collection.get(
+                    where={"function_name": function_name},
+                    include=['documents', 'metadatas']
+                )
                 
-                if score > 0 and matched_kw:
-                    context = self._extract_context(file_data['lines'], line_num)
+                for i, (document, metadata) in enumerate(zip(
+                    exact_matches['documents'],
+                    exact_matches['metadatas']
+                )):
+                    doc_id = f"func_{function_name}_{i}"
+                    result = {
+                        'id': doc_id,
+                        'content': document,
+                        'metadata': metadata,
+                        'score': 1.0,  # Exact match
+                        'relevance_score': 1.0,
+                        'score_type': 'exact_match',
+                        'query': function_name,
+                        'collection': collection_name
+                    }
+                    results.append(result)
                     
-                    match = KeywordMatch(
-                        file_path=str(file_path),
-                        line_number=line_num,
-                        matched_text=line.strip(),
-                        context=context,
-                        score=score,
-                        matched_keywords=matched_kw
-                    )
-                    matches.append(match)
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error in function search for collection '{collection_name}': {e}")
         
-        # Sort by score (descending) and limit results
-        matches.sort(key=lambda x: x.score, reverse=True)
-        return matches[:max_results]
+        return results[:k]
+    
+    def search_by_class(self, class_name: str, k: int = 5) -> List[Dict]:
+        """
+        Search for classes by name.
+        
+        Args:
+            class_name: Class name to search for
+            k: Maximum number of results
+            
+        Returns:
+            List of class matches
+        """
+        results = []
+        
+        for collection_name in self._collections.keys():
+            try:
+                collection = self._collections[collection_name]
+                exact_matches = collection.get(
+                    where={"class_name": class_name},
+                    include=['documents', 'metadatas']
+                )
+                
+                for i, (document, metadata) in enumerate(zip(
+                    exact_matches['documents'],
+                    exact_matches['metadatas']
+                )):
+                    doc_id = f"class_{class_name}_{i}"
+                    result = {
+                        'id': doc_id,
+                        'content': document,
+                        'metadata': metadata,
+                        'score': 1.0,  # Exact match
+                        'relevance_score': 1.0,
+                        'score_type': 'exact_match',
+                        'query': class_name,
+                        'collection': collection_name
+                    }
+                    results.append(result)
+                    
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error in class search for collection '{collection_name}': {e}")
+        
+        return results[:k]
 
 
-def search_keyword(query_text: str, k: int = 5) -> List[Dict]:
+def search_keyword_chromadb(query_text: str, k: int = 5) -> List[Dict]:
     """
-    Convenience function for keyword search using default configuration.
+    Convenience function for ChromaDB-based keyword search.
     
     Args:
         query_text: Search query string
         k: Maximum number of results to return
         
     Returns:
-        List of search results as dictionaries
+        List of search results from ChromaDB
     """
     try:
-        if CONFIG_AVAILABLE:
-            codebase_path = resolve_codebase_path()
-        else:
-            # Fallback path resolution
-            import os
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            codebase_path = Path(project_root) / "data" / "codebases" / "manuel_natcom" / "src" / "sim"
+        engine = ChromaDBKeywordSearch(verbose=False)
+        results = engine.search_all_collections(query_text, k)
         
-        engine = KeywordSearchEngine(verbose=False)
-        matches = engine.search_directory(codebase_path, query_text, max_results=k)
-        
-        # Convert to dictionary format
-        results = []
-        for match in matches:
-            result = {
-                'file_path': match.file_path,
-                'line_number': match.line_number,
-                'content': match.matched_text,
-                'context': match.context,
-                'score': match.score,
-                'matched_keywords': match.matched_keywords
+        # Convert to expected format for compatibility
+        formatted_results = []
+        for result in results:
+            metadata = result['metadata']
+            formatted_result = {
+                'id': result['id'],
+                'content': result['content'],
+                'metadata': {
+                    'file_path': metadata.get('file_path', 'Unknown'),
+                    'start_line': metadata.get('start_line', 0),
+                    'end_line': metadata.get('end_line', 0),
+                    'function_name': metadata.get('function_name', ''),
+                    'class_name': metadata.get('class_name', ''),
+                    'namespace': metadata.get('namespace', ''),
+                },
+                'relevance_score': result['score'],  # Use relevance_score for keyword search
+                'score': result['score'],
+                'score_type': 'keyword_relevance',  # Clear labeling
+                'model_type': 'chromadb_keyword',
+                'query': query_text
             }
-            results.append(result)
+            formatted_results.append(formatted_result)
         
-        return results
+        return formatted_results
         
     except Exception as e:
-        print(f"Error in keyword search: {e}")
+        print(f"Error in ChromaDB keyword search: {e}")
         return []
+
+
+# Backward compatibility alias
+search_keyword = search_keyword_chromadb

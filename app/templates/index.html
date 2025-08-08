@@ -578,8 +578,18 @@
         }
 
         function createResultItem(result) {
+            // Determine score label based on search method
+            let scoreLabel = 'Score';
+            if (result.score_type === 'cosine_similarity') {
+                scoreLabel = 'Similarity';
+            } else if (result.score_type === 'keyword_relevance' || result.score_type === 'relevance') {
+                scoreLabel = 'Relevance';
+            } else if (result.score_type === 'exact_match') {
+                scoreLabel = 'Match';
+            }
+            
             const scoreHtml = result.has_score 
-                ? `<div class="result-score">${(result.score * 100).toFixed(1)}%</div>`
+                ? `<div class="result-score" title="${scoreLabel}">${(result.score * 100).toFixed(1)}% ${scoreLabel}</div>`
                 : '';
 
             // Create proper file link with line range

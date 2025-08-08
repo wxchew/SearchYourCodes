@@ -425,38 +425,49 @@ def _format_keyword_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any
     formatted = []
     for i, result in enumerate(results):
         try:
-            # Extract file path - keyword results have absolute paths
-            file_path = result.get('file_path', 'Unknown')
+            # Handle ChromaDB keyword search results structure
+            metadata = result.get('metadata', {})
+            
+            # Extract file path - ChromaDB results have metadata nested
+            file_path = metadata.get('file_path') or result.get('file_path', 'Unknown')
             
             # Convert absolute path to relative path for consistency
             file_path = _convert_to_relative_path(file_path)
             
             # Extract function/content info
             content = result.get('content', '')
-            matched_keywords = result.get('matched_keywords', [])
             
-            # Try to extract a meaningful title from the content
-            function_name = _extract_function_name_from_content(content)
+            # Get function name from metadata first, then try to extract from content
+            function_name = metadata.get('function_name') or result.get('function_name')
             if not function_name:
-                if matched_keywords:
-                    function_name = f"Match: {', '.join(matched_keywords)}"
+                function_name = _extract_function_name_from_content(content)
+            if not function_name:
+                class_name = metadata.get('class_name') or result.get('class_name')
+                if class_name and class_name != 'Unknown':
+                    function_name = f"Class: {class_name}"
                 else:
-                    function_name = f"Text Match {i+1}"
+                    matched_keywords = result.get('matched_keywords', [])
+                    if matched_keywords:
+                        function_name = f"Match: {', '.join(matched_keywords)}"
+                    else:
+                        function_name = f"Code Fragment {i+1}"
             
-            # Extract line numbers
-            line_number = result.get('line_number', 1)
+            # Extract line numbers - use metadata first
+            line_start = metadata.get('start_line') or result.get('line_number', 1) or result.get('start_line', 1)
+            line_end = metadata.get('end_line') or result.get('end_line', line_start)
             
-            # Read the actual code content with context
-            code_content = _read_file_lines(file_path, max(1, line_number-2), line_number+3)
+            # Use the content from ChromaDB directly as it's already well-formatted
+            code_content = content
             
             formatted.append({
                 'function': function_name,
                 'file': file_path,
                 'code': code_content,
                 'score': result.get('score', 1.0),
+                'score_type': result.get('score_type', 'keyword_relevance'),  # Pass through score type
                 'has_score': True,
-                'line_start': line_number,
-                'line_end': line_number
+                'line_start': line_start,
+                'line_end': line_end
             })
         except Exception as e:
             app.logger.warning(f"Error formatting keyword result: {e}")
@@ -571,6 +582,7 @@ def _format_semantic_results(results: List[Dict[str, Any]], method_name: str) ->
                 'file': file_path,
                 'code': code_content,
                 'score': round(similarity, 3),
+                'score_type': 'cosine_similarity',  # Vector search uses cosine similarity
                 'has_score': True,
                 'line_start': line_start,
                 'line_end': line_end

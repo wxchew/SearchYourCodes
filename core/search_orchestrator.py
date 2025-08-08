@@ -14,7 +14,7 @@ Features:
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 
-from core.keyword_search import KeywordSearchEngine, search_keyword
+from core.keyword_search import search_keyword_chromadb
 from core.vector_search import VectorSearchEngine
 
 
@@ -27,18 +27,15 @@ class SearchOrchestrator:
     """
     
     def __init__(self, 
-                 keyword_engine: Optional[KeywordSearchEngine] = None,
                  vector_engine: Optional[VectorSearchEngine] = None,
                  verbose: bool = False):
         """
         Initialize the search orchestrator.
         
         Args:
-            keyword_engine: Keyword search engine instance
             vector_engine: Vector search engine instance
             verbose: Enable verbose logging
         """
-        self.keyword_engine = keyword_engine or KeywordSearchEngine(verbose=verbose)
         self.vector_engine = vector_engine or VectorSearchEngine()
         self.verbose = verbose
     
@@ -56,9 +53,9 @@ class SearchOrchestrator:
         if self.verbose:
             print(f"Performing multi-method search for: '{query}'")
         
-        # Keyword search
+        # Keyword search using ChromaDB
         try:
-            keyword_results = search_keyword(query, k)
+            keyword_results = search_keyword_chromadb(query, k)
         except Exception as e:
             print(f"Keyword search failed: {e}")
             keyword_results = []
@@ -111,7 +108,7 @@ class SearchOrchestrator:
         
         if 'keyword' in methods:
             try:
-                results['keyword'] = search_keyword(query, k)
+                results['keyword'] = search_keyword_chromadb(query, k)
             except Exception as e:
                 print(f"Keyword search failed: {e}")
                 results['keyword'] = []

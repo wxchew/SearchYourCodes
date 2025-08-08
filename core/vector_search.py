@@ -272,6 +272,8 @@ class VectorSearchEngine:
                     'function_name': metadata.get('function_name', ''),
                     'class_name': metadata.get('class_name', ''),
                     'score': float(similarity),
+                    'similarity_score': float(similarity),  # True cosine similarity
+                    'score_type': 'cosine_similarity',  # Mathematical meaning
                     'distance': float(distance)
                 }
                 formatted_results.append(result)
