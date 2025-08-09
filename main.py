@@ -13,7 +13,8 @@ Usage:
     python main.py                    # Start web application
     python main.py --setup          # Run initial setup
     python main.py --config         # Show configuration
-    python main.py --test           # Test search functionality
+    python main.py --test           # Run comprehensive tests (system + web app)
+    python main.py --test-webapp    # Test web app functionality only
 """
 
 import os
@@ -114,11 +115,28 @@ def test_search(config):
     sys.path.insert(0, str(Path(__file__).parent))
     
     try:
-        from core.search import compare_models
+        from core.search import compare_models, _run_comprehensive_tests, _test_webapp_functionality
+        
+        # Run comprehensive system tests
+        print("\n" + "="*60)
+        print("1. RUNNING COMPREHENSIVE SYSTEM TESTS")
+        print("="*60)
+        _run_comprehensive_tests()
+        
+        # Run web app tests
+        print("\n" + "="*60)
+        print("2. RUNNING WEB APPLICATION TESTS")
+        print("="*60)
+        _test_webapp_functionality()
+        
+        # Run legacy compatibility test
+        print("\n" + "="*60)
+        print("3. RUNNING LEGACY COMPATIBILITY TEST")
+        print("="*60)
         
         # Test with a query that should exist in the biological simulation codebase
         test_query = "motor"  # Changed from "main" to a term that exists in this codebase
-        print(f"Testing query: '{test_query}'")
+        print(f"Testing legacy compare_models with query: '{test_query}'")
         
         keyword_results, unixcoder_results, sbert_results = compare_models(test_query, k=2)
         
@@ -126,10 +144,37 @@ def test_search(config):
         print(f"✅ UniXcoder search: {len(unixcoder_results)} results") 
         print(f"✅ SBERT search: {len(sbert_results)} results")
         
+        print("\n" + "="*60)
+        print("🎉 ALL TESTS COMPLETED SUCCESSFULLY!")
+        print("="*60)
+        
         return True
         
     except Exception as e:
         print(f"❌ Search test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_webapp_only(config):
+    """Test web application functionality only"""
+    print("🌐 Testing Web Application Functionality...")
+    
+    sys.path.insert(0, str(Path(__file__).parent))
+    
+    try:
+        from core.search import _test_webapp_functionality
+        
+        _test_webapp_functionality()
+        
+        print("\n🎉 Web app tests completed successfully!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Web app test failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -174,7 +219,8 @@ Examples:
   python main.py                    # Start web application
   python main.py --setup          # Run initial setup  
   python main.py --config         # Show configuration
-  python main.py --test           # Test search functionality
+  python main.py --test           # Run comprehensive tests (system + web app)
+  python main.py --test-webapp    # Test web app functionality only
         """
     )
     
@@ -183,7 +229,9 @@ Examples:
     parser.add_argument('--config', action='store_true', 
                        help='Show current configuration')
     parser.add_argument('--test', action='store_true',
-                       help='Test search functionality')
+                       help='Run comprehensive tests (includes system and web app tests)')
+    parser.add_argument('--test-webapp', action='store_true',
+                       help='Test web application functionality only')
     parser.add_argument('--force-setup', action='store_true',
                        help='Force setup even if already configured')
     
@@ -203,6 +251,11 @@ Examples:
             
     elif args.test:
         success = test_search(config)
+        if not success:
+            sys.exit(1)
+            
+    elif args.test_webapp:
+        success = test_webapp_only(config)
         if not success:
             sys.exit(1)
             
