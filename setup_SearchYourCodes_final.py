@@ -374,7 +374,7 @@ class SearchYourCodesSetup:
             # Extract texts for batch embedding
             batch_texts = []
             for i, chunk in enumerate(batch_chunks):
-                chunk_id = f"chunk_{start_idx + i}"
+                chunk_id = chunk._generate_id()  # Use actual chunk ID instead of fallback
                 ids.append(chunk_id)
                 documents.append(chunk.content)
                 batch_texts.append(chunk.content)
@@ -390,7 +390,8 @@ class SearchYourCodesSetup:
                     'content_length': len(chunk.content),
                     'has_function': chunk.function_name not in [None, 'Unknown'],
                     'has_class': chunk.class_name not in [None, 'Unknown'],
-                    'docstring': getattr(chunk, 'docstring', '') or ''
+                    'docstring': getattr(chunk, 'docstring', '') or '',
+                    'chunk_id': chunk_id  # Add chunk_id to metadata for consistent retrieval
                 }
                 metadatas.append(metadata)
             

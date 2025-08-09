@@ -72,7 +72,13 @@ class CodeChunk:
     
     def _generate_id(self) -> str:
         """Generate a unique identifier for the chunk."""
-        file_name = self.file_path.name
+        # Handle both Path objects and string paths
+        if hasattr(self.file_path, 'name'):
+            file_name = self.file_path.name
+        else:
+            from pathlib import Path
+            file_name = Path(self.file_path).name
+            
         if self.function_name:
             base = f"{file_name}::{self.function_name}"
         elif self.class_name:

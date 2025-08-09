@@ -9,6 +9,7 @@ Features:
 - ChromaDB integration for vector storage
 - Configurable similarity search
 - Code preprocessing for optimal embeddings
+- Semantic search capabilities with different embedding approaches for code understanding
 """
 
 import os
@@ -21,13 +22,6 @@ import numpy as np
 import chromadb
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
-
-"""
-Vector-based code search using ChromaDB and various embedding models.
-
-This module provides semantic search capabilities with different embedding
-approaches for code understanding.
-"""
 
 import os
 import numpy as np
@@ -257,8 +251,6 @@ class VectorSearchEngine:
                 embedding = embedding / norm
                 
             return embedding
-            
-        return embedding
     
     def get_query_embedding(self, query_text: str, model_type: str = 'unixcoder') -> np.ndarray:
         """

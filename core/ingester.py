@@ -24,34 +24,7 @@ from tqdm import tqdm
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
 print(f"Using device: {DEVICE}")
 
-# Helper Functions for Embedding Generation
-def get_hf_embeddings(texts: List[str], model_name: str, device: str) -> np.ndarray:
-    """Generate embeddings using HuggingFace AutoModel."""
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name).to(device)
-    
-    encoded_input = tokenizer(texts, padding=True, truncation=True, 
-                             max_length=512, return_tensors='pt').to(device)
-    
-    with torch.no_grad():
-        model_output = model(**encoded_input)
-    
-    # Mean pooling
-    token_embeddings = model_output.last_hidden_state
-    attention_mask = encoded_input['attention_mask']
-    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
-    sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-    
-    return (sum_embeddings / sum_mask).cpu().numpy()
-
-
-def get_sbert_embeddings(texts: List[str], model_name: str, device: str) -> np.ndarray:
-    """Generate embeddings using Sentence-BERT model."""
-    model = SentenceTransformer(model_name, device=device)
-    return model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
-
-
+# Helper Functions for Embedding Generation - Import from embedder module to avoid duplication
 def get_hf_embeddings(texts: List[str], model_name: str, device: str, pooling_method: str = 'mean') -> np.ndarray:
     """Generate embeddings using HuggingFace AutoModel."""
     # Import from embedder module to avoid duplication
@@ -90,7 +63,11 @@ def load_embedding_model(model_config: Dict):
 
 def main():
     """Main ingestion logic."""
-    from .config import load_config, get_model_config
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    
+    from core.config import load_config, get_model_config
     
     # Load configuration
     config = load_config()
@@ -197,6 +174,7 @@ def main():
         chunk_metadatas = []
         for chunk in all_chunks:
             metadata = {
+                "chunk_id": chunk["id"],  # Store chunk ID in metadata for consistent retrieval
                 "file_path": chunk["file_path"],
                 "start_line": str(chunk["start_line"]),
                 "end_line": str(chunk["end_line"]),

@@ -123,9 +123,9 @@ def compare_models(query: str, k: int = 5) -> Tuple[List[Dict], List[Dict], List
         print(f"UniXcoder search failed: {e}")
         unixcoder_results = []
     
-    # SBERT vector search (using minilm model type for compatibility)
+    # SBERT vector search (using standardized sbert model type)
     try:
-        sbert_results = engine.search_code(query, 'minilm', k)
+        sbert_results = engine.search_code(query, 'sbert', k)
     except Exception as e:
         print(f"SBERT search failed: {e}")
         sbert_results = []

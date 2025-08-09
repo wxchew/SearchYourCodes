@@ -551,11 +551,10 @@ def _format_semantic_results(results: List[Dict[str, Any]], method_name: str) ->
                 function_name = result.get('function_name', '')
                 class_name = result.get('class_name', '')
             
-            # Convert distance to similarity score (ChromaDB uses cosine distance)
-            if distance <= 1:
-                similarity = 1 - distance
-            else:
-                similarity = 1 / (1 + distance)
+            # Convert distance to similarity score (ChromaDB uses Squared L2 distance)
+            # For normalized vectors: squared_L2 = 2 - 2*dot_product
+            # Therefore: similarity = 1 - distance/2
+            similarity = 1 - distance / 2
             
             # Ensure similarity is between 0 and 1
             similarity = max(0, min(1, similarity))
