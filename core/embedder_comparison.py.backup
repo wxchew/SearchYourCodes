@@ -1,0 +1,226 @@
+"""
+Updated Embedder Module with OOP Integration
+
+This module demonstrates how to refactor the existing embedder.py to use
+the new OOP architecture while maintaining backward compatibility.
+
+The key improvement is in the benchmark_model function which now uses
+the factory pattern instead of if/elif chains.
+"""
+
+import argparse
+import json
+import time
+from pathlib import Path
+from typing import List, Dict
+
+# Import the new OOP architecture
+from core.embedders_oop import EmbedderFactory, EmbedderRegistry, benchmark_all_models
+
+# Keep existing functions for backward compatibility
+from core.embedder import get_hf_embeddings, get_sbert_embeddings
+
+
+def benchmark_model_oop(texts: List[str], model_config: Dict, output_file: Path) -> Dict:
+    """
+    NEW: Object-oriented benchmark function using the factory pattern.
+    
+    This replaces the old if/elif approach with a clean, extensible design.
+    Adding new model types requires no changes to this function.
+    
+    Args:
+        texts: List of input texts
+        model_config: Model configuration dictionary
+        output_file: Path to save benchmark results
+        
+    Returns:
+        Dictionary containing benchmark metrics
+    """
+    print(f"\n🔧 Benchmarking with OOP architecture: {model_config['name']}")
+    
+    try:
+        # Create embedder using factory - no if/elif needed!
+        embedder = EmbedderFactory.from_config(model_config)
+        
+        # Benchmark using the embedder's built-in method
+        metrics = embedder.benchmark(texts, output_file)
+        
+        return metrics
+        
+    except Exception as e:
+        print(f"❌ Error in OOP benchmark: {e}")
+        # Fallback to legacy method for compatibility
+        print("🔄 Falling back to legacy benchmark method...")
+        return benchmark_model_legacy(texts, model_config, output_file)
+
+
+def benchmark_model_legacy(texts: List[str], model_config: Dict, output_file: Path) -> Dict:
+    """
+    LEGACY: Original benchmark function with if/elif chains.
+    
+    This is the old implementation that demonstrates the extensibility problem.
+    Kept for backward compatibility and comparison.
+    """
+    model_name = model_config['name']
+    model_type = model_config['type']
+    device = model_config['device']
+    
+    print(f"\n⚠️  Using legacy benchmark: {model_name} ({model_type}) on {device}...")
+    
+    start_time = time.time()
+    
+    # 🚨 PROBLEM: This if/elif chain must be modified for each new model type
+    if model_type == "sentence_transformer":
+        embeddings = get_sbert_embeddings(texts, model_name, device)
+    elif model_type == "huggingface_automodel":
+        pooling_method = model_config.get('pooling_method', 'mean')
+        embeddings = get_hf_embeddings(texts, model_name, device, batch_size=16, pooling_method=pooling_method)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    
+    # Calculate metrics (same as original)
+    metrics = {
+        "model_name": model_name,
+        "model_type": model_type,
+        "device": device,
+        "total_time_seconds": total_time,
+        "chunks_processed": len(texts),
+        "time_per_chunk": total_time / len(texts),
+        "embedding_dimension": embeddings.shape[1],
+        "total_embeddings": embeddings.shape[0],
+        "method": "legacy"
+    }
+    
+    print(f"✓ Processed {len(texts)} chunks in {total_time:.2f}s")
+    
+    # Save results
+    if output_file:
+        import numpy as np
+        np.save(output_file.with_suffix('.npy'), embeddings)
+        with open(output_file.with_suffix('.json'), 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2)
+    
+    return metrics
+
+
+def benchmark_model(texts: List[str], model_config: Dict, output_file: Path) -> Dict:
+    """
+    IMPROVED: Main benchmark function that uses OOP by default.
+    
+    This function now delegates to the OOP implementation, making it
+    extensible without modification. New model types work automatically.
+    """
+    return benchmark_model_oop(texts, model_config, output_file)
+
+
+def demonstrate_extensibility():
+    """
+    Demonstration of how easy it is to add new model types with OOP approach.
+    """
+    print("\n🎯 EXTENSIBILITY DEMONSTRATION")
+    print("=" * 50)
+    
+    # Show current available types
+    print(f"Current embedder types: {EmbedderRegistry.get_available_types()}")
+    
+    # Example: Adding a hypothetical new embedder type
+    print("\n📝 Adding a new embedder type...")
+    
+    from core.embedders_oop import BaseEmbedder
+    import numpy as np
+    
+    class MockNewEmbedder(BaseEmbedder):
+        """Mock embedder to demonstrate extensibility."""
+        
+        def _load_model(self):
+            print(f"Loading mock model: {self.model_name}")
+        
+        def _embed_batch(self, texts: List[str]) -> np.ndarray:
+            # Return random embeddings for demo
+            return np.random.rand(len(texts), 384)
+    
+    # Register the new type
+    EmbedderRegistry.register("mock_new_type", MockNewEmbedder)
+    
+    print(f"✅ New embedder registered!")
+    print(f"Updated types: {EmbedderRegistry.get_available_types()}")
+    
+    # Test that it works with existing infrastructure
+    new_config = {
+        "type": "mock_new_type",
+        "name": "mock-model-v1",
+        "device": "cpu"
+    }
+    
+    try:
+        embedder = EmbedderFactory.from_config(new_config)
+        print(f"✅ New embedder created: {embedder.__class__.__name__}")
+        
+        # Test benchmark function works with new type
+        test_texts = ["test code snippet"]
+        metrics = benchmark_model(test_texts, new_config, None)
+        print(f"✅ Benchmark works with new type: {metrics['embedding_dimension']} dimensions")
+        
+    except Exception as e:
+        print(f"❌ Error with new type: {e}")
+    
+    print("\n🎉 Extensibility demonstration complete!")
+    print("💡 Key insight: No modifications needed to benchmark_model() function!")
+
+
+def main():
+    """
+    Updated main function demonstrating both legacy and OOP approaches.
+    """
+    print("🔬 EMBEDDER ARCHITECTURE COMPARISON")
+    print("=" * 60)
+    
+    # Example configurations
+    test_configs = {
+        "sentence_transformer_test": {
+            "type": "sentence_transformer",
+            "name": "all-MiniLM-L6-v2",
+            "device": "cpu"
+        },
+        "huggingface_test": {
+            "type": "huggingface_automodel", 
+            "name": "microsoft/unixcoder-base",
+            "device": "cpu",
+            "pooling_method": "mean"
+        }
+    }
+    
+    test_texts = [
+        "def hello(): return 'world'",
+        "class Example: pass",
+        "import numpy as np"
+    ]
+    
+    print(f"\nTesting with {len(test_texts)} sample texts...")
+    
+    # Compare both approaches
+    for config_name, config in test_configs.items():
+        print(f"\n--- Testing {config_name} ---")
+        
+        try:
+            # Test OOP approach
+            print("🆕 OOP Approach:")
+            oop_metrics = benchmark_model_oop(test_texts, config, None)
+            
+            print("📊 Legacy Approach:")  
+            legacy_metrics = benchmark_model_legacy(test_texts, config, None)
+            
+            print(f"✅ Both approaches work for {config['type']}")
+            
+        except Exception as e:
+            print(f"❌ Error testing {config_name}: {e}")
+    
+    # Demonstrate extensibility
+    demonstrate_extensibility()
+
+
+if __name__ == "__main__":
+    main()

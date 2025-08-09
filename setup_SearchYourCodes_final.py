@@ -23,15 +23,14 @@ import traceback
 import numpy as np
 import torch
 import chromadb
-from transformers import AutoTokenizer, AutoModel
-from sentence_transformers import SentenceTransformer
 
 # Add core to path and import required modules
 sys.path.append('core')
 try:
-    from config import resolve_codebase_path, get_file_extensions, validate_config
+    from core.config import resolve_codebase_path, get_file_extensions, validate_config
     from core.parsers import CodeChunk, CppParser
-    from core.search import get_hf_embedding, get_sbert_embedding as search_get_sbert_embedding
+    # Import OOP embedding architecture
+    from core.embedders_oop import EmbedderFactory, EmbedderRegistry, BaseEmbedder
 except ImportError as e:
     print(f"❌ Error importing modules: {e}")
     print("Make sure you're running from the project root directory")
@@ -49,10 +48,24 @@ class SearchYourCodesSetup:
         self.codebase_path = resolve_codebase_path()
         self.chroma_path = Path("data/chroma_db")
         
-        # Models (loaded on demand)
-        self.unixcoder_model = None
-        self.unixcoder_tokenizer = None
-        self.sbert_model = None
+        # OOP Embedders (loaded on demand)
+        self.unixcoder_embedder = None
+        self.sbert_embedder = None
+        
+        # Model configurations for OOP embedders
+        self.model_configs = {
+            'unixcoder': {
+                'type': 'huggingface_automodel',
+                'name': 'microsoft/unixcoder-base',
+                'device': self.device,
+                'pooling_method': 'mean'
+            },
+            'sbert': {
+                'type': 'sentence_transformer',
+                'name': 'all-MiniLM-L6-v2',  # This is an SBERT model
+                'device': self.device
+            }
+        }
         
         # Statistics
         self.stats = {
@@ -103,19 +116,17 @@ class SearchYourCodesSetup:
         print("✅ Environment validation passed!")
     
     def load_models(self):
-        """Load embedding models with validation."""
+        """Load embedding models using OOP architecture with validation."""
         print("📥 Loading embedding models...")
         
         try:
-            # Load UniXcoder
-            print("  Loading UniXcoder...")
-            self.unixcoder_tokenizer = AutoTokenizer.from_pretrained('microsoft/unixcoder-base')
-            self.unixcoder_model = AutoModel.from_pretrained('microsoft/unixcoder-base').to(self.device)
-            self.unixcoder_model.eval()
+            # Load UniXcoder embedder
+            print("  Loading UniXcoder embedder...")
+            self.load_unixcoder_embedder()
             
-            # Load SBERT
-            print("  Loading SBERT...")
-            self.sbert_model = SentenceTransformer('all-MiniLM-L6-v2', device=self.device)
+            # Load SBERT embedder
+            print("  Loading SBERT embedder...")
+            self.load_sbert_embedder()
             
             # Test embeddings
             test_text = "int main() { return 0; }"
@@ -144,14 +155,100 @@ class SearchYourCodesSetup:
         except Exception as e:
             print(f"❌ Error loading models: {e}")
             raise
+
+    def load_unixcoder_embedder(self):
+        """Load UniXcoder embedder using OOP architecture."""
+        if self.unixcoder_embedder is None:
+            if self.verbose:
+                print("🤖 Loading UniXcoder embedder...")
+            try:
+                self.unixcoder_embedder = EmbedderFactory.from_config(self.model_configs['unixcoder'])
+                print("✅ UniXcoder embedder loaded successfully")
+            except Exception as e:
+                print(f"❌ Failed to load UniXcoder embedder: {e}")
+                raise
+
+    def load_sbert_embedder(self):
+        """Load SBERT embedder using OOP architecture."""
+        if self.sbert_embedder is None:
+            if self.verbose:
+                print("🤖 Loading SBERT embedder...")
+            try:
+                self.sbert_embedder = EmbedderFactory.from_config(self.model_configs['sbert'])
+                print("✅ SBERT embedder loaded successfully")
+            except Exception as e:
+                print(f"❌ Failed to load SBERT embedder: {e}")
+                raise
     
+    def get_batch_embeddings(self, texts: List[str], batch_size: int = 32) -> Tuple[np.ndarray, np.ndarray]:
+        """Generate embeddings for multiple texts efficiently using OOP architecture."""
+        # Ensure embedders are loaded
+        if self.unixcoder_embedder is None:
+            self.load_unixcoder_embedder()
+        if self.sbert_embedder is None:
+            self.load_sbert_embedder()
+        
+        try:
+            # Use OOP embedders for batch processing (much faster!)
+            unixcoder_embeddings = self.unixcoder_embedder.embed(texts, 
+                                                               batch_size=batch_size, 
+                                                               show_progress=False)
+            sbert_embeddings = self.sbert_embedder.embed(texts, 
+                                                       batch_size=batch_size, 
+                                                       show_progress=False)
+            
+            return unixcoder_embeddings, sbert_embeddings
+            
+        except Exception as e:
+            print(f"    Warning: Batch embedding failed, falling back to individual processing: {e}")
+            # Fallback to individual processing
+            unixcoder_embeddings = []
+            sbert_embeddings = []
+            
+            for text in texts:
+                try:
+                    unixcoder_emb = self.get_unixcoder_embedding(text)
+                    unixcoder_embeddings.append(unixcoder_emb)
+                except Exception:
+                    unixcoder_embeddings.append(np.zeros(768))
+                
+                try:
+                    sbert_emb = self.get_sbert_embedding(text)
+                    sbert_embeddings.append(sbert_emb)
+                except Exception:
+                    sbert_embeddings.append(np.zeros(384))
+            
+            return np.array(unixcoder_embeddings), np.array(sbert_embeddings)
+
     def get_unixcoder_embedding(self, text: str) -> np.ndarray:
-        """Generate UniXcoder embedding using search.py method."""
-        return get_hf_embedding(text, self.unixcoder_model, self.unixcoder_tokenizer)
+        """Generate UniXcoder embedding using OOP architecture (for single text)."""
+        # Ensure embedder is loaded
+        if self.unixcoder_embedder is None:
+            self.load_unixcoder_embedder()
+        
+        try:
+            # Use OOP embedder (optimized for single text)
+            embedding = self.unixcoder_embedder.embed([text], show_progress=False)
+            return embedding[0]  # Return first embedding from batch
+        except Exception as e:
+            print(f"    Warning: UniXcoder embedding failed: {e}")
+            # Return zero vector as fallback
+            return np.zeros(768)
     
     def get_sbert_embedding(self, text: str) -> np.ndarray:
-        """Generate SBERT embedding using search.py method.""" 
-        return search_get_sbert_embedding(text, self.sbert_model)
+        """Generate SBERT embedding using OOP architecture (for single text)."""
+        # Ensure embedder is loaded
+        if self.sbert_embedder is None:
+            self.load_sbert_embedder()
+        
+        try:
+            # Use OOP embedder (optimized for single text)
+            embedding = self.sbert_embedder.embed([text], show_progress=False)
+            return embedding[0]  # Return first embedding from batch
+        except Exception as e:
+            print(f"    Warning: SBERT embedding failed: {e}")
+            # Return zero vector as fallback
+            return np.zeros(384)
     
     def parse_codebase(self) -> List[CodeChunk]:
         """Parse codebase using existing CppParser."""
@@ -273,13 +370,14 @@ class SearchYourCodesSetup:
             ids = []
             documents = []
             metadatas = []
-            unixcoder_embeddings = []
-            sbert_embeddings = []
             
+            # Extract texts for batch embedding
+            batch_texts = []
             for i, chunk in enumerate(batch_chunks):
                 chunk_id = f"chunk_{start_idx + i}"
                 ids.append(chunk_id)
                 documents.append(chunk.content)
+                batch_texts.append(chunk.content)
                 
                 # Create metadata
                 metadata = {
@@ -295,29 +393,53 @@ class SearchYourCodesSetup:
                     'docstring': getattr(chunk, 'docstring', '') or ''
                 }
                 metadatas.append(metadata)
+            
+            # Generate all embeddings for this batch at once (MUCH FASTER!)
+            try:
+                print(f"    Generating embeddings for {len(batch_texts)} chunks...")
+                unixcoder_embeddings_batch, sbert_embeddings_batch = self.get_batch_embeddings(
+                    batch_texts, batch_size=min(16, len(batch_texts))
+                )
                 
-                # Generate embeddings with error handling
-                try:
-                    unixcoder_emb = self.get_unixcoder_embedding(chunk.content)
-                    unixcoder_embeddings.append(unixcoder_emb.flatten().tolist())
-                    self.stats['unixcoder_embeddings'] += 1
-                except Exception as e:
-                    self.stats['embedding_errors'] += 1
-                    if self.verbose:
-                        print(f"    UniXcoder embedding error for {chunk_id}: {e}")
-                    # Use zero vector as fallback
-                    unixcoder_embeddings.append([0.0] * 768)
+                # Convert to lists for ChromaDB
+                unixcoder_embeddings = [emb.tolist() for emb in unixcoder_embeddings_batch]
+                sbert_embeddings = [emb.tolist() for emb in sbert_embeddings_batch]
                 
-                try:
-                    sbert_emb = self.get_sbert_embedding(chunk.content)
-                    sbert_embeddings.append(sbert_emb.flatten().tolist())
-                    self.stats['sbert_embeddings'] += 1
-                except Exception as e:
-                    self.stats['embedding_errors'] += 1
-                    if self.verbose:
-                        print(f"    SBERT embedding error for {chunk_id}: {e}")
-                    # Use zero vector as fallback
-                    sbert_embeddings.append([0.0] * 384)
+                # Update stats
+                self.stats['unixcoder_embeddings'] += len(unixcoder_embeddings)
+                self.stats['sbert_embeddings'] += len(sbert_embeddings)
+                
+            except Exception as e:
+                print(f"    Warning: Batch embedding failed, falling back to individual processing: {e}")
+                # Fallback to original individual processing
+                unixcoder_embeddings = []
+                sbert_embeddings = []
+                
+                for i, chunk in enumerate(batch_chunks):
+                    # Progress indicator for within batch
+                    if len(batch_chunks) > 10 and (i + 1) % 10 == 0:
+                        print(f"    Processing chunk {i + 1}/{len(batch_chunks)} in batch...")
+                    
+                    # Generate embeddings with error handling
+                    try:
+                        unixcoder_emb = self.get_unixcoder_embedding(chunk.content)
+                        unixcoder_embeddings.append(unixcoder_emb.flatten().tolist())
+                        self.stats['unixcoder_embeddings'] += 1
+                    except Exception as e:
+                        self.stats['embedding_errors'] += 1
+                        if self.verbose:
+                            print(f"    UniXcoder embedding error for chunk_{start_idx + i}: {e}")
+                        unixcoder_embeddings.append([0.0] * 768)
+                    
+                    try:
+                        sbert_emb = self.get_sbert_embedding(chunk.content)
+                        sbert_embeddings.append(sbert_emb.flatten().tolist())
+                        self.stats['sbert_embeddings'] += 1
+                    except Exception as e:
+                        self.stats['embedding_errors'] += 1
+                        if self.verbose:
+                            print(f"    SBERT embedding error for chunk_{start_idx + i}: {e}")
+                        sbert_embeddings.append([0.0] * 384)
             
             # Add to collections
             try:

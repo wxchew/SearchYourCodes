@@ -5,7 +5,7 @@ This module provides vector-based search functionality using various embedding m
 including HuggingFace AutoModels and Sentence Transformers with ChromaDB storage.
 
 Features:
-- Multiple embedding model support (UniXcoder, SBERT, etc.)
+- Multiple embedding model support (UniXcoder, SBERT/all-MiniLM-L6-v2, etc.)
 - ChromaDB integration for vector storage
 - Configurable similarity search
 - Code preprocessing for optimal embeddings
@@ -22,9 +22,37 @@ import chromadb
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
 
+"""
+Vector-based code search using ChromaDB and various embedding models.
+
+This module provides semantic search capabilities with different embedding
+approaches for code understanding.
+"""
+
+import os
+import numpy as np
+import chromadb
+from typing import List, Dict, Optional, Any
+import re
+
+# Automatically detect device
+import torch
+if torch.backends.mps.is_available():
+    DEVICE = "mps"
+elif torch.cuda.is_available():
+    DEVICE = "cuda"
+else:
+    DEVICE = "cpu"
+
 # Configuration
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+
+# Import OOP embedders
+try:
+    from core.embedders_oop import EmbedderFactory
+except ImportError:
+    print("Warning: OOP embedders not available, falling back to legacy approach")
+    EmbedderFactory = None
 
 
 class VectorSearchEngine:
@@ -59,37 +87,57 @@ class VectorSearchEngine:
         
         self.client = chromadb.PersistentClient(path=self.chroma_db_path)
         
-        # Model instances (lazy loaded)
+        # OOP Embedders (lazy loaded)
+        self._unixcoder_embedder = None
+        self._sbert_embedder = None
+        
+        # Model configurations for OOP embedders
+        self.model_configs = {
+            'unixcoder': {
+                'type': 'huggingface_automodel',
+                'name': 'microsoft/unixcoder-base',
+                'device': self.device,
+                'pooling_method': 'mean'
+            },
+            'sbert': {
+                'type': 'sentence_transformer',
+                'name': 'all-MiniLM-L6-v2',
+                'device': self.device
+            }
+        }
         self._unixcoder_model = None
         self._unixcoder_tokenizer = None
         self._minilm_model = None
     
     @property
-    def unixcoder_model(self):
-        """Lazy load UniXcoder model."""
-        if self._unixcoder_model is None:
-            model_name = 'microsoft/unixcoder-base'
-            self._unixcoder_tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self._unixcoder_model = AutoModel.from_pretrained(model_name).to(self.device)
-            self._unixcoder_model.eval()
-        return self._unixcoder_model
-    
+    def unixcoder_embedder(self):
+        """Lazy load UniXcoder embedder using OOP architecture."""
+        if self._unixcoder_embedder is None:
+            if EmbedderFactory:
+                self._unixcoder_embedder = EmbedderFactory.from_config(self.model_configs['unixcoder'])
+            else:
+                # Fallback to legacy approach if OOP not available
+                from transformers import AutoTokenizer, AutoModel
+                model_name = 'microsoft/unixcoder-base'
+                self._unixcoder_tokenizer = AutoTokenizer.from_pretrained(model_name)
+                self._unixcoder_model = AutoModel.from_pretrained(model_name).to(self.device)
+                self._unixcoder_model.eval()
+                return self._unixcoder_model
+        return self._unixcoder_embedder
+
     @property
-    def unixcoder_tokenizer(self):
-        """Lazy load UniXcoder tokenizer."""
-        if self._unixcoder_tokenizer is None:
-            # Trigger model loading which also loads tokenizer
-            _ = self.unixcoder_model
-        return self._unixcoder_tokenizer
-    
-    @property
-    def minilm_model(self):
-        """Lazy load MiniLM model."""
-        if self._minilm_model is None:
-            model_name = 'all-MiniLM-L6-v2'
-            self._minilm_model = SentenceTransformer(model_name, device=self.device)
-        return self._minilm_model
-    
+    def sbert_embedder(self):
+        """Lazy load SBERT embedder using OOP architecture."""
+        if self._sbert_embedder is None:
+            if EmbedderFactory:
+                self._sbert_embedder = EmbedderFactory.from_config(self.model_configs['sbert'])
+            else:
+                # Fallback to legacy approach if OOP not available
+                from sentence_transformers import SentenceTransformer
+                self._minilm_model = SentenceTransformer('all-MiniLM-L6-v2', device=self.device)
+                return self._minilm_model
+        return self._sbert_embedder
+
     def preprocess_code_for_unixcoder(self, code_text: str) -> str:
         """
         Preprocess code text for optimal UniXcoder embeddings.
@@ -141,7 +189,7 @@ class VectorSearchEngine:
     
     def get_hf_embedding(self, query_text: str, model_type: str = 'unixcoder') -> np.ndarray:
         """
-        Generate embedding using HuggingFace AutoModel.
+        Generate embedding using HuggingFace AutoModel via OOP embedders.
         
         Args:
             query_text: Text to embed
@@ -151,34 +199,39 @@ class VectorSearchEngine:
             Normalized embedding vector
         """
         if model_type == 'unixcoder':
-            model = self.unixcoder_model
-            tokenizer = self.unixcoder_tokenizer
+            embedder = self.unixcoder_embedder
+            
+            # Check if we're using OOP embedder or fallback
+            if hasattr(embedder, 'embed'):
+                # OOP embedder - expects list input
+                processed_text = self.preprocess_code_for_unixcoder(query_text)
+                embedding = embedder.embed([processed_text], show_progress=False)
+                return embedding[0]  # Return first embedding from batch
+            else:
+                # Fallback to legacy approach
+                model = embedder
+                tokenizer = self._unixcoder_tokenizer
+                processed_text = self.preprocess_code_for_unixcoder(query_text)
+                
+                # Tokenize and get embeddings
+                inputs = tokenizer(processed_text, return_tensors="pt", 
+                                  truncation=True, max_length=512, padding=True)
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                
+                with torch.no_grad():
+                    outputs = model(**inputs)
+                    # Use mean pooling of last hidden states
+                    embeddings = outputs.last_hidden_state.mean(dim=1)
+                    # Normalize
+                    embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+                    
+                return embeddings.cpu().numpy().flatten()
         else:
             raise ValueError(f"Unsupported HuggingFace model type: {model_type}")
-        
-        # Preprocess for code if using UniXcoder
-        if model_type == 'unixcoder':
-            processed_text = self.preprocess_code_for_unixcoder(query_text)
-        else:
-            processed_text = query_text
-        
-        # Tokenize and get embeddings
-        inputs = tokenizer(processed_text, return_tensors="pt", 
-                          truncation=True, max_length=512, padding=True)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
-        with torch.no_grad():
-            outputs = model(**inputs)
-            # Use mean pooling of last hidden states
-            embeddings = outputs.last_hidden_state.mean(dim=1)
-            # Normalize
-            embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-            
-        return embeddings.cpu().numpy().flatten()
     
     def get_sbert_embedding(self, query_text: str) -> np.ndarray:
         """
-        Generate embedding using Sentence-BERT model.
+        Generate embedding using Sentence-BERT model via OOP embedders.
         
         Args:
             query_text: Text to embed
@@ -186,13 +239,24 @@ class VectorSearchEngine:
         Returns:
             Normalized embedding vector
         """
-        model = self.minilm_model
-        embedding = model.encode([query_text], convert_to_numpy=True)[0]
+        embedder = self.sbert_embedder
         
-        # Normalize embedding
-        norm = np.linalg.norm(embedding)
-        if norm > 0:
-            embedding = embedding / norm
+        # Check if we're using OOP embedder or fallback
+        if hasattr(embedder, 'embed'):
+            # OOP embedder - expects list input
+            embedding = embedder.embed([query_text], show_progress=False)
+            return embedding[0]  # Return first embedding from batch
+        else:
+            # Fallback to legacy approach
+            model = embedder
+            embedding = model.encode([query_text], convert_to_numpy=True)[0]
+            
+            # Normalize embedding
+            norm = np.linalg.norm(embedding)
+            if norm > 0:
+                embedding = embedding / norm
+                
+            return embedding
             
         return embedding
     
@@ -202,14 +266,14 @@ class VectorSearchEngine:
         
         Args:
             query_text: Query text to embed
-            model_type: Type of embedding model ('unixcoder' or 'minilm')
+            model_type: Type of embedding model ('unixcoder' or 'minilm'/'sbert')
             
         Returns:
             Query embedding vector
         """
         if model_type == 'unixcoder':
             return self.get_hf_embedding(query_text, 'unixcoder')
-        elif model_type == 'minilm':
+        elif model_type in ['minilm', 'sbert']:  # Both refer to the same SBERT model
             return self.get_sbert_embedding(query_text)
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
@@ -220,7 +284,7 @@ class VectorSearchEngine:
         
         Args:
             query_text: Search query text
-            model_type: Embedding model to use ('unixcoder' or 'minilm')
+            model_type: Embedding model to use ('unixcoder' or 'minilm'/'sbert')
             k: Number of results to return
             
         Returns:
@@ -233,7 +297,7 @@ class VectorSearchEngine:
             # Determine collection name based on existing naming convention
             if model_type == 'unixcoder':
                 collection_name = "unixcoder_snippets"
-            elif model_type == 'minilm':
+            elif model_type in ['minilm', 'sbert']:  # Both refer to the same SBERT collection
                 collection_name = "sbert_snippets"
             else:
                 collection_name = f"code_chunks_{model_type}"

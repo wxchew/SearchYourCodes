@@ -306,6 +306,26 @@ EMBEDDINGS_DIR = _legacy['EMBEDDINGS_DIR']
 VECTOR_DB_PATH = _legacy['VECTOR_DB_PATH']
 
 
+def _get_valid_model_types():
+    """
+    Get valid model types from the OOP architecture registry.
+    
+    Falls back to hardcoded list if OOP module is not available.
+    """
+    try:
+        from .embedders_oop import EmbedderRegistry
+        return EmbedderRegistry.get_available_types()
+    except ImportError:
+        # Fallback to hardcoded list for backward compatibility
+        return ['sentence_transformer', 'huggingface_automodel']
+
+
+def _is_valid_model_type(model_type: str) -> bool:
+    """Check if a model type is valid using the OOP registry."""
+    valid_types = _get_valid_model_types()
+    return model_type in valid_types
+
+
 def validate_config() -> bool:
     """Validate the configuration settings and path resolution."""
     try:
@@ -346,8 +366,9 @@ def validate_config() -> bool:
                     errors.append(f"Model '{model_name}' missing 'name' field")
                 if 'type' not in model_config:
                     errors.append(f"Model '{model_name}' missing 'type' field")
-                elif model_config['type'] not in ['sentence_transformer', 'huggingface_automodel']:
-                    errors.append(f"Model '{model_name}' has invalid type: {model_config['type']}")
+                elif not _is_valid_model_type(model_config['type']):
+                    valid_types = _get_valid_model_types()
+                    errors.append(f"Model '{model_name}' has invalid type: {model_config['type']}. Valid types: {valid_types}")
                 if 'device' not in model_config:
                     errors.append(f"Model '{model_name}' missing 'device' field")
         else:

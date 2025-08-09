@@ -60,20 +60,32 @@ def get_hf_embeddings(texts: List[str], model_name: str, device: str, pooling_me
 
 
 def load_embedding_model(model_config: Dict):
-    """Load the chosen embedding model based on configuration."""
-    model_name = model_config['name']
-    model_type = model_config['type']
-    device = model_config['device']
-
-    if model_type == "sentence_transformer":
-        print(f"Loading Sentence-Transformer model: {model_name}")
-        return lambda texts: get_sbert_embeddings(texts, model_name, device)
-    elif model_type == "huggingface_automodel":
-        print(f"Loading Hugging Face AutoModel: {model_name}")
-        pooling_method = model_config.get('pooling_method', 'mean')
-        return lambda texts: get_hf_embeddings(texts, model_name, device, pooling_method=pooling_method)
-    else:
-        raise ValueError(f"Unknown model type: {model_type}")
+    """
+    Load the chosen embedding model based on configuration using OOP architecture.
+    
+    This function now uses the factory pattern to create embedders, making it
+    extensible without modification when new model types are added.
+    """
+    try:
+        # Use OOP factory pattern - no if/elif chains needed!
+        from .embedders_oop import EmbedderFactory
+        
+        print(f"🔧 Loading embedder with OOP architecture: {model_config['name']}")
+        
+        # Create embedder using factory pattern
+        embedder = EmbedderFactory.from_config(model_config)
+        
+        # Return the embed method as a function
+        return embedder.embed
+        
+    except ImportError:
+        # OOP module not available
+        print("⚠️  OOP module not available")
+        return None
+    except Exception as e:
+        print(f"❌ Error in OOP model loading: {e}")
+        # Return None to indicate failure
+        return None
 
 
 def main():

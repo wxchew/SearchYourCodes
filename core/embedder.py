@@ -113,7 +113,10 @@ def get_sbert_embeddings(texts: List[str], model_name: str, device: str = "auto"
 
 def benchmark_model(texts: List[str], model_config: Dict, output_file: Path) -> Dict:
     """
-    Benchmark a model's performance and save results.
+    Benchmark a model's performance using OOP architecture.
+    
+    This function uses the factory pattern to create embedders, making it
+    extensible without modification when new model types are added.
     
     Args:
         texts: List of input texts
@@ -122,6 +125,36 @@ def benchmark_model(texts: List[str], model_config: Dict, output_file: Path) -> 
         
     Returns:
         Dictionary containing benchmark metrics
+    """
+    try:
+        # Use OOP factory pattern - no if/elif chains needed!
+        from .embedders_oop import EmbedderFactory
+        
+        print(f"\n🔧 Benchmarking with OOP architecture: {model_config['name']}")
+        
+        # Create embedder using factory pattern
+        embedder = EmbedderFactory.from_config(model_config)
+        
+        # Use the embedder's built-in benchmark method
+        metrics = embedder.benchmark(texts, output_file)
+        
+        return metrics
+        
+    except ImportError:
+        # Fallback to legacy implementation if OOP module not available
+        print("⚠️  OOP module not available, using legacy implementation...")
+        return benchmark_model_legacy(texts, model_config, output_file)
+    except Exception as e:
+        print(f"❌ Error in OOP benchmark: {e}")
+        print("🔄 Falling back to legacy implementation...")
+        return benchmark_model_legacy(texts, model_config, output_file)
+
+
+def benchmark_model_legacy(texts: List[str], model_config: Dict, output_file: Path) -> Dict:
+    """
+    Legacy benchmark implementation with if/elif chains.
+    
+    This is kept for backward compatibility and as a fallback.
     """
     model_name = model_config['name']
     model_type = model_config['type']
@@ -158,22 +191,25 @@ def benchmark_model(texts: List[str], model_config: Dict, output_file: Path) -> 
         "chunks_processed": len(texts),
         "time_per_chunk": total_time / len(texts),
         "embedding_dimension": embeddings.shape[1],
-        "total_embeddings": embeddings.shape[0]
+        "total_embeddings": embeddings.shape[0],
+        "method": "legacy"
     }
     
     print(f"✓ Processed {len(texts)} chunks in {total_time:.2f}s ({total_time/len(texts):.4f}s per chunk)")
     print(f"  Embedding dimension: {embeddings.shape[1]}")
     
     # Save embeddings as numpy array (more efficient than JSON)
-    numpy_file = output_file.with_suffix('.npy')
-    np.save(numpy_file, embeddings)
-    print(f"  Saved embeddings to: {numpy_file}")
+    if output_file:
+        numpy_file = output_file.with_suffix('.npy')
+        np.save(numpy_file, embeddings)
+        print(f"  Saved embeddings to: {numpy_file}")
+        
+        # Also save just the metadata as JSON for reference
+        with open(output_file.with_suffix('.json'), 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2)
+        
+        print(f"  Results saved to: {output_file}")
     
-    # Also save just the metadata as JSON for reference
-    with open(output_file.with_suffix('.json'), 'w', encoding='utf-8') as f:
-        json.dump(metrics, f, indent=2)
-    
-    print(f"  Results saved to: {output_file}")
     return metrics
 
 

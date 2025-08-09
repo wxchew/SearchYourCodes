@@ -2,9 +2,9 @@
 Comprehensive Code Search System
 
 This module provides a unified interface for multi-method code search using:
-1. Keyword Search: Exact text matching with fuzzy search capabilities
-2. UniXcoder: Code structure and programming pattern search
-3. SBERT: Semantic understanding and conceptual search
+1. Keyword: Exact text matching with fuzzy search  
+2. UniXcoder: Code structure and programming patterns  
+3. SBERT: Semantic understanding and conceptual search (all-MiniLM-L6-v2)
 
 The system integrates ChromaDB for vector storage and provides an interactive
 comparison interface for evaluating different search approaches.
@@ -23,14 +23,6 @@ try:
     # Try relative imports first (when run as module)
     from core.keyword_search import search_keyword_chromadb
     from core.vector_search import VectorSearchEngine
-    from core.search_orchestrator import (
-        SearchOrchestrator, 
-        SearchResultFormatter,
-        compare_models,
-        search_all_methods,
-        get_model_display_name,
-        print_results
-    )
 except ImportError:
     # Handle direct execution
     import sys
@@ -44,14 +36,6 @@ except ImportError:
     
     from core.keyword_search import search_keyword_chromadb
     from core.vector_search import VectorSearchEngine
-    from core.search_orchestrator import (
-        SearchOrchestrator, 
-        SearchResultFormatter,
-        compare_models,
-        search_all_methods,
-        get_model_display_name,
-        print_results
-    )
 
 # Configuration
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -70,6 +54,111 @@ except ImportError:
     chroma_db_path = str(project_root / "data" / "chroma_db")
 
 client = chromadb.PersistentClient(path=chroma_db_path)
+
+
+# Search orchestration functions (moved from search_orchestrator.py)
+def get_model_display_name(model_type: str) -> str:
+    """Get display name for model type."""
+    display_names = {
+        'keyword': 'Keyword Search',
+        'unixcoder': 'UniXcoder (Code Structure)',
+        'sbert': 'SBERT (Semantic)',
+        'minilm': 'SBERT (Semantic)'  # Alias for backward compatibility
+    }
+    return display_names.get(model_type, model_type.title())
+
+
+def print_results(results: List[Dict], query: str, model_type: str) -> None:
+    """Print formatted search results."""
+    model_name = get_model_display_name(model_type)
+    print(f"\n{model_name} Results for '{query}':")
+    print("=" * 80)
+    
+    if not results:
+        print("No results found.")
+        return
+    
+    for i, result in enumerate(results, 1):
+        print(f"\n{i}. Score: {result.get('score', 0):.3f}")
+        
+        # Handle different result formats
+        if 'file_path' in result:
+            file_path = result['file_path']
+            if 'line_number' in result:
+                print(f"   File: {file_path}:{result['line_number']}")
+            else:
+                print(f"   File: {file_path}")
+        
+        # Display function/class context if available
+        if result.get('function_name'):
+            print(f"   Function: {result['function_name']}")
+        if result.get('class_name'):
+            print(f"   Class: {result['class_name']}")
+        
+        # Display content
+        content = result.get('content', result.get('matched_text', ''))
+        if content:
+            # Truncate very long content
+            if len(content) > 200:
+                content = content[:200] + "..."
+            print(f"   Content: {content}")
+
+
+def compare_models(query: str, k: int = 5) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """Compare different embedding models for the same query."""
+    # Keyword search
+    try:
+        keyword_results = search_keyword_chromadb(query, k)
+    except Exception as e:
+        print(f"Keyword search failed: {e}")
+        keyword_results = []
+    
+    # Vector search engine for embeddings
+    engine = VectorSearchEngine()
+    
+    # UniXcoder vector search
+    try:
+        unixcoder_results = engine.search_code(query, 'unixcoder', k)
+    except Exception as e:
+        print(f"UniXcoder search failed: {e}")
+        unixcoder_results = []
+    
+    # SBERT vector search (using minilm model type for compatibility)
+    try:
+        sbert_results = engine.search_code(query, 'minilm', k)
+    except Exception as e:
+        print(f"SBERT search failed: {e}")
+        sbert_results = []
+    
+    return keyword_results, unixcoder_results, sbert_results
+
+
+def search_all_methods(query: str, k: int = 5) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    """Search using all available methods and return results."""
+    return compare_models(query, k)
+
+
+# Updated SearchOrchestrator class for compatibility
+class SearchOrchestrator:
+    """Main search orchestrator that coordinates different search methods."""
+    
+    def __init__(self, verbose: bool = False):
+        self.verbose = verbose
+    
+    def search_all_methods(self, query: str, k: int = 5):
+        return search_all_methods(query, k)
+    
+    def compare_models(self, query: str, k: int = 5):
+        return compare_models(query, k)
+
+
+# Legacy compatibility wrapper
+class SearchResultFormatter:
+    """Legacy compatibility wrapper."""
+    @staticmethod
+    def print_results(results, query, model_type):
+        return print_results(results, query, model_type)
+
 
 # Initialize search components
 print(f"Using device: {DEVICE}")
@@ -155,8 +244,8 @@ def _run_comprehensive_tests():
     
     try:
         orchestrator = SearchOrchestrator()
-        keyword_res, unixcoder_res, minilm_res = orchestrator.search_all_methods(test_query, k=2)
-        print(f"✅ Orchestrator: {len(keyword_res)} keyword, {len(unixcoder_res)} unixcoder, {len(minilm_res)} minilm")
+        keyword_res, unixcoder_res, sbert_res = orchestrator.search_all_methods(test_query, k=2)
+        print(f"✅ Orchestrator: {len(keyword_res)} keyword, {len(unixcoder_res)} unixcoder, {len(sbert_res)} sbert")
     except Exception as e:
         print(f"❌ Orchestrator failed: {e}")
     
@@ -396,7 +485,7 @@ def _run_interactive_search():
     print("Search Methods:")
     print("  - KEYWORD: Literal text and keyword matching")
     print("  - UNIXCODER: Programming patterns and syntax")
-    print("  - MINILM: Conceptual understanding and meaning")
+    print("  - SBERT: Conceptual understanding and meaning")
     print("\nCommands:")
     print("  - Type your search query")
     print("  - 'test' - Run comprehensive system tests")
