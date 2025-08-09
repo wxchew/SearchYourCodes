@@ -247,16 +247,26 @@ class SearchResultFormatter:
         print(f"{'='*80}")
 
 
+# Global orchestrator instance for efficient reuse
+_global_orchestrator = None
+
+def _get_global_orchestrator() -> SearchOrchestrator:
+    """Get or create global orchestrator instance."""
+    global _global_orchestrator
+    if _global_orchestrator is None:
+        _global_orchestrator = SearchOrchestrator()
+    return _global_orchestrator
+
 # Convenience functions for backward compatibility
 def compare_models(query: str, k: int = 5) -> Tuple[List[Dict], List[Dict], List[Dict]]:
-    """Legacy function for model comparison."""
-    orchestrator = SearchOrchestrator()
+    """Legacy function for model comparison - uses persistent orchestrator."""
+    orchestrator = _get_global_orchestrator()
     return orchestrator.compare_models(query, k)
 
 
 def search_all_methods(query: str, k: int = 5) -> Tuple[List[Dict], List[Dict], List[Dict]]:
-    """Legacy function for all-methods search."""
-    orchestrator = SearchOrchestrator()
+    """Legacy function for all-methods search - uses persistent orchestrator."""
+    orchestrator = _get_global_orchestrator()
     return orchestrator.search_all_methods(query, k)
 
 
