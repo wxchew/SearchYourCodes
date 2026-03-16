@@ -21,15 +21,22 @@ from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
 # Configuration
-DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+from core.device import get_device
+DEVICE = get_device()
 print(f"Using device: {DEVICE}")
 
-# Helper Functions for Embedding Generation - Import from embedder module to avoid duplication
+# Helper Functions for Embedding Generation
 def get_hf_embeddings(texts: List[str], model_name: str, device: str, pooling_method: str = 'mean') -> np.ndarray:
-    """Generate embeddings using HuggingFace AutoModel."""
-    # Import from embedder module to avoid duplication
-    from .embedder import get_hf_embeddings as _get_hf_embeddings
-    return _get_hf_embeddings(texts, model_name, device, pooling_method=pooling_method)
+    """Generate embeddings using HuggingFace AutoModel via OOP architecture."""
+    from .embedders_oop import EmbedderFactory
+    config = {
+        'type': 'huggingface_automodel',
+        'name': model_name,
+        'device': device,
+        'pooling_method': pooling_method,
+    }
+    embedder = EmbedderFactory.from_config(config)
+    return embedder.embed(texts, show_progress=True)
 
 
 def load_embedding_model(model_config: Dict):

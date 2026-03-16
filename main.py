@@ -180,50 +180,136 @@ def run_setup(config):
         return False
 
 
-def test_search(config):
-    """Test search functionality"""
-    print("🧪 Testing Search Functionality...")
-    
+def run_reindex(config):
+    """Run incremental re-indexing of changed files"""
+    print("Incremental Re-indexing...")
+
     sys.path.insert(0, str(Path(__file__).parent))
-    
+
     try:
-        from core.search import compare_models, _run_comprehensive_tests, _test_webapp_functionality
-        
-        # Run comprehensive system tests
-        print("\n" + "="*60)
-        print("1. RUNNING COMPREHENSIVE SYSTEM TESTS")
-        print("="*60)
-        _run_comprehensive_tests()
-        
-        # Run web app tests
-        print("\n" + "="*60)
-        print("2. RUNNING WEB APPLICATION TESTS")
-        print("="*60)
-        _test_webapp_functionality()
-        
-        # Run legacy compatibility test
-        print("\n" + "="*60)
-        print("3. RUNNING LEGACY COMPATIBILITY TEST")
-        print("="*60)
-        
-        # Test with a query that should exist in the biological simulation codebase
-        test_query = "motor"  # Changed from "main" to a term that exists in this codebase
-        print(f"Testing legacy compare_models with query: '{test_query}'")
-        
-        keyword_results, unixcoder_results, sbert_results = compare_models(test_query, k=2)
-        
-        print(f"✅ Keyword search: {len(keyword_results)} results")
-        print(f"✅ UniXcoder search: {len(unixcoder_results)} results") 
-        print(f"✅ SBERT search: {len(sbert_results)} results")
-        
-        print("\n" + "="*60)
-        print("🎉 ALL TESTS COMPLETED SUCCESSFULLY!")
-        print("="*60)
-        
+        import json
+        import time
+        from core.parsers.parser_factory import MultiLanguageParser
+
+        codebase_path = Path(config['codebase']['path'])
+        processed_dir = Path(config['data']['processed'])
+        mtime_file = processed_dir / "file_mtimes.json"
+        chunks_file = processed_dir / "code_chunks_clean.json"
+
+        # Load previous mtimes
+        old_mtimes = {}
+        if mtime_file.exists():
+            with open(mtime_file, 'r') as f:
+                old_mtimes = json.load(f)
+
+        # Scan current files
+        extensions = set(config['codebase']['extensions'])
+        current_files = {}
+        for ext in extensions:
+            for fp in codebase_path.rglob(f"*{ext}"):
+                rel = str(fp.relative_to(codebase_path))
+                current_files[rel] = fp.stat().st_mtime
+
+        # Find changed/new/deleted files
+        changed = []
+        for rel, mtime in current_files.items():
+            if rel not in old_mtimes or old_mtimes[rel] != mtime:
+                changed.append(rel)
+
+        deleted = [rel for rel in old_mtimes if rel not in current_files]
+
+        if not changed and not deleted:
+            print("No files changed since last index. Nothing to do.")
+            return True
+
+        print(f"  Changed/new files: {len(changed)}")
+        print(f"  Deleted files: {len(deleted)}")
+
+        # Parse changed files
+        parser = MultiLanguageParser(verbose=True)
+        new_chunks = []
+        for rel in changed:
+            fp = codebase_path / rel
+            try:
+                file_chunks = parser.parse_file(fp)
+                for chunk in file_chunks:
+                    new_chunks.append(chunk.to_dict())
+            except Exception as e:
+                print(f"  Error parsing {rel}: {e}")
+
+        print(f"  Parsed {len(new_chunks)} chunks from changed files")
+
+        # Load existing chunks, remove stale ones, add new ones
+        existing_chunks = []
+        if chunks_file.exists():
+            with open(chunks_file, 'r') as f:
+                existing_chunks = json.load(f)
+
+        # Remove chunks from changed or deleted files
+        changed_or_deleted = set(changed) | set(deleted)
+        filtered_chunks = [
+            c for c in existing_chunks
+            if not any(c.get('file_path', '').endswith(rel) for rel in changed_or_deleted)
+        ]
+        filtered_chunks.extend(new_chunks)
+
+        # Save updated chunks
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        with open(chunks_file, 'w') as f:
+            json.dump(filtered_chunks, f, indent=2)
+
+        # Save updated mtimes
+        with open(mtime_file, 'w') as f:
+            json.dump(current_files, f, indent=2)
+
+        print(f"  Updated chunks file: {len(filtered_chunks)} total chunks")
+        print("  Re-run --setup to regenerate embeddings and re-ingest into ChromaDB.")
+        print("  Incremental re-indexing complete!")
         return True
-        
+
     except Exception as e:
-        print(f"❌ Search test failed: {e}")
+        print(f"Re-indexing failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_search(config):
+    """Test search functionality using pytest and basic smoke tests"""
+    print("Testing Search Functionality...")
+
+    sys.path.insert(0, str(Path(__file__).parent))
+
+    try:
+        from core.search import compare_models
+
+        # Smoke test: run a query through all search methods
+        test_query = "motor"
+        print(f"\nSmoke test with query: '{test_query}'")
+
+        keyword_results, unixcoder_results, sbert_results = compare_models(test_query, k=2)
+
+        print(f"  Keyword search: {len(keyword_results)} results")
+        print(f"  UniXcoder search: {len(unixcoder_results)} results")
+        print(f"  SBERT search: {len(sbert_results)} results")
+
+        # Run pytest suite
+        print("\nRunning pytest suite...")
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, '-m', 'pytest', 'tests/', '-v'],
+            cwd=str(Path(__file__).parent)
+        )
+
+        if result.returncode == 0:
+            print("\nAll tests passed!")
+            return True
+        else:
+            print("\nSome tests failed.")
+            return False
+
+    except Exception as e:
+        print(f"Search test failed: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -231,20 +317,26 @@ def test_search(config):
 
 def test_webapp_only(config):
     """Test web application functionality only"""
-    print("🌐 Testing Web Application Functionality...")
-    
+    print("Testing Web Application Functionality...")
+
     sys.path.insert(0, str(Path(__file__).parent))
-    
+
     try:
-        from core.search import _test_webapp_functionality
-        
-        _test_webapp_functionality()
-        
-        print("\n🎉 Web app tests completed successfully!")
-        return True
-        
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, '-m', 'pytest', 'tests/test_app.py', '-v'],
+            cwd=str(Path(__file__).parent)
+        )
+
+        if result.returncode == 0:
+            print("\nWeb app tests passed!")
+            return True
+        else:
+            print("\nSome web app tests failed.")
+            return False
+
     except Exception as e:
-        print(f"❌ Web app test failed: {e}")
+        print(f"Web app test failed: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -309,6 +401,8 @@ Examples:
                        help='Test web application functionality only')
     parser.add_argument('--force-setup', action='store_true',
                        help='Force setup even if already configured')
+    parser.add_argument('--reindex', action='store_true',
+                       help='Incremental re-index: only re-process changed files')
     
     args = parser.parse_args()
     
@@ -329,6 +423,11 @@ Examples:
         if not success:
             sys.exit(1)
             
+    elif args.reindex:
+        success = run_reindex(config)
+        if not success:
+            sys.exit(1)
+
     elif args.test:
         success = test_search(config)
         if not success:

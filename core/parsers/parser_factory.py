@@ -18,6 +18,12 @@ from typing import Dict, Optional, Set, Type, List
 from .base_parser import BaseParser
 from .cpp_parser import CppParser
 
+try:
+    from .python_parser import PythonParser
+    _python_available = True
+except ImportError:
+    _python_available = False
+
 
 class ParserFactory:
     """
@@ -178,6 +184,8 @@ class ParserFactory:
 
 # Register built-in parsers
 ParserFactory.register_parser('cpp', CppParser)
+if _python_available:
+    ParserFactory.register_parser('python', PythonParser)
 
 
 class MultiLanguageParser:

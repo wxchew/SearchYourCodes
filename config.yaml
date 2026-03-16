@@ -23,12 +23,15 @@ codebase:
   # File extensions to search (add/remove based on your language)
   extensions:
     - .cpp    # C++ source files
-    - .cxx    # Alternative C++ extension  
+    - .cxx    # Alternative C++ extension
     - .cc     # Alternative C++ extension
     - .h      # C/C++ header files
     - .hpp    # C++ header files
     - .hxx    # Alternative header extension
     - .c      # C source files
+    - .py     # Python source files
+    - .pyx    # Cython source files
+    - .pyi    # Python type stubs
   
   # 🌐 For other languages, replace extensions with:
   # extensions: [.py, .pyx, .pyi]           # Python
